@@ -21,11 +21,11 @@ export default function DataCard({ title, value, subtitle, isBlurred = false, co
   const textColor = color === "secondary" || color === "accent" ? "text-white" : "text-black";
 
   return (
-    <div className={`p-6 border-brutal border-black shadow-brutal relative overflow-hidden ${bgColors[color]} ${textColor}`} style={{ borderWidth: "3px" }}>
+    <div className={`p-6 border-brutal border-black shadow-brutal relative min-h-full break-words ${bgColors[color]} ${textColor}`} style={{ borderWidth: "3px" }}>
       <h3 className="font-bold text-xl uppercase mb-2 border-b-2 border-current pb-2">{title}</h3>
       
       <div className={`relative ${isBlurred ? "filter blur-md select-none" : ""}`}>
-        <p className="font-black leading-tight" style={{ fontSize: "clamp(1.25rem, 2vw, 2.25rem)" }}>{value}</p>
+        <p className="font-black leading-tight whitespace-normal" style={{ fontSize: "clamp(1.25rem, 2vw, 2.25rem)" }}>{value}</p>
         {subtitle && <p className="text-sm font-bold mt-2 opacity-90">{subtitle}</p>}
       </div>
 

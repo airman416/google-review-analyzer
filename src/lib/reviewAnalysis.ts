@@ -615,9 +615,9 @@ export function normalizeDeepAnalysis(
 
   return {
     executive_summary:
-      nonEmptyString(candidate.executive_summary) ||
+      meaningfulString(candidate.executive_summary) ||
       fallback.executive_summary,
-    critical_findings: nonEmptyArray(candidate.critical_findings)
+    critical_findings: meaningfulStringArray(candidate.critical_findings)
       ? candidate.critical_findings
       : fallback.critical_findings,
     issue_clusters: nonEmptyArray(candidate.issue_clusters)
@@ -629,8 +629,9 @@ export function normalizeDeepAnalysis(
     root_causes: nonEmptyArray(candidate.root_causes)
       ? candidate.root_causes
       : fallback.root_causes,
-    response_quality_audit:
-      candidate.response_quality_audit ?? fallback.response_quality_audit,
+    response_quality_audit: meaningfulResponseQualityAudit(candidate.response_quality_audit)
+      ? candidate.response_quality_audit
+      : fallback.response_quality_audit,
     revenue_assessment:
       candidate.revenue_assessment ?? fallback.revenue_assessment,
     growth_opportunities: nonEmptyArray(candidate.growth_opportunities)
@@ -649,10 +650,33 @@ export function normalizeDeepAnalysis(
   };
 }
 
-function nonEmptyString(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0
+function meaningfulString(value: unknown): string | null {
+  return typeof value === "string" && hasMeaningfulText(value)
     ? value.trim()
     : null;
+}
+
+function meaningfulStringArray(value: string[] | undefined): value is string[] {
+  return Array.isArray(value) && value.length > 0 && value.every(hasMeaningfulText);
+}
+
+function meaningfulResponseQualityAudit(
+  value: DeepAnalysis["response_quality_audit"] | undefined
+): value is DeepAnalysis["response_quality_audit"] {
+  return Boolean(
+    value &&
+      hasMeaningfulText(value.summary) &&
+      hasMeaningfulText(value.improved_response) &&
+      hasMeaningfulText(value.recovery_offer)
+  );
+}
+
+function hasMeaningfulText(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const text = value.trim();
+  const wordCount = text.split(/\s+/).filter(Boolean).length;
+
+  return text.length >= 8 && wordCount >= 2;
 }
 
 function nonEmptyArray<T>(value: T[] | undefined): value is T[] {

@@ -341,12 +341,7 @@ export default function Home() {
     metrics?.trend_data?.[4]?.rating !== undefined &&
     metrics?.trend_data?.[0]?.rating !== undefined &&
     metrics.trend_data[4].rating < metrics.trend_data[0].rating;
-  const shortText = (value = "", max = 110) =>
-    value.length > max ? `${value.slice(0, max).trimEnd()}...` : value;
-  const firstSentence = (value = "", max = 120) => {
-    const sentence = value.match(/^[^.!?]+[.!?]/)?.[0] ?? value;
-    return shortText(sentence, max);
-  };
+  const displayText = (value = "") => value.trim();
   const loadingStages = [
     { threshold: 16, icon: Star, label: "Pulling recent Google reviews..." },
     { threshold: 38, icon: TrendingDown, label: "Finding review patterns..." },
@@ -505,14 +500,14 @@ export default function Home() {
                       {isGrowthMode ? "Next-Level Opportunity" : "The Real Opportunity"}
                     </h3>
                     <p className="text-xl font-black leading-tight bg-white text-black p-5 border-4 border-[#facc15]">
-                      {firstSentence(deepAnalysis.executive_summary, 135)}
+                      {displayText(deepAnalysis.executive_summary)}
                     </p>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-stretch">
                     {diagnosisFindings.slice(0, 3).map((finding, idx) => (
-                      <div key={idx} className="bg-white text-black p-5 border-4 border-[#facc15] min-h-40">
+                      <div key={idx} className="bg-white text-black p-5 border-4 border-[#facc15] h-full break-words">
                         <p className="text-5xl font-black text-red-500 mb-3">0{idx + 1}</p>
-                        <p className="font-black text-sm leading-tight">{shortText(finding, 85)}</p>
+                        <p className="font-black text-sm leading-tight">{displayText(finding)}</p>
                       </div>
                     ))}
                   </div>
@@ -550,12 +545,12 @@ export default function Home() {
               <section className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 <div className="bg-white border-4 border-black p-6 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] lg:col-span-2">
                   <h3 className="text-2xl font-black uppercase mb-6">Customer Voice</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-stretch">
                     {reviewEvidence.map((evidence, idx) => (
-                      <div key={idx} className="border-2 border-black p-4 bg-gray-50">
-                        <p className="font-black uppercase text-red-600 mb-3 text-sm">{shortText(evidence.issue, 34)}</p>
+                      <div key={idx} className="border-2 border-black p-4 bg-gray-50 h-full break-words">
+                        <p className="font-black uppercase text-red-600 mb-3 text-sm">{displayText(evidence.issue)}</p>
                         <p className="text-4xl font-black text-gray-300 leading-none mb-1">&ldquo;</p>
-                        <p className="font-bold text-sm leading-snug">{shortText(evidence.quote, 95)}</p>
+                        <p className="font-bold text-sm leading-snug">{displayText(evidence.quote)}</p>
                       </div>
                     ))}
                   </div>
@@ -629,7 +624,7 @@ export default function Home() {
                   {metrics.keyword_bottlenecks?.map((kw, idx) => (
                     <div key={idx} className="bg-red-50 p-4 border-2 border-black">
                       <div className="flex justify-between gap-3 mb-2">
-                        <span className="font-black text-lg text-red-600 uppercase">{shortText(kw.keyword, 30)}</span>
+                        <span className="font-black text-lg text-red-600 uppercase break-words">{displayText(kw.keyword)}</span>
                         <span className="bg-black text-white font-black px-2 py-1 text-sm">{kw.count}x</span>
                       </div>
                       <div className="h-4 bg-white border-2 border-black">
@@ -671,7 +666,7 @@ export default function Home() {
                   <p>
                     {isGrowthMode
                       ? "The review profile is strong. The upside is turning trust into more direct orders and repeat guests."
-                      : firstSentence(metrics.clv_calculation?.narrative || deepAnalysis?.revenue_assessment?.narrative, 125)}
+                      : displayText(metrics.clv_calculation?.narrative || deepAnalysis?.revenue_assessment?.narrative)}
                   </p>
                   <p className="text-sm uppercase mt-3 text-gray-700">
                     Confidence: {metrics.clv_calculation?.confidence || deepAnalysis?.revenue_assessment?.confidence || "directional"}
@@ -681,11 +676,11 @@ export default function Home() {
             </div>
 
             {/* Row 4: AI Win-Back & Recent Reviews */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch">
               <div className="bg-white border-4 border-black p-6 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] flex flex-col">
                 <h3 className="text-2xl font-black uppercase mb-6 flex items-center gap-2"><Bot /> {aiReviewIsAmplifier ? "AI Review Amplifier" : "AI Win-Back Preview"}</h3>
                 
-                {aiWinBack && (
+                {aiWinBack ? (
                   <div className="space-y-6">
                     <div className={`${aiReviewIsAmplifier ? "bg-green-50 border-green-200" : "bg-red-50 border-red-200"} p-4 border-2 rounded-bl-none`}>
                       <p className={`font-bold text-xs mb-1 ${aiReviewIsAmplifier ? "text-green-700" : "text-red-600"}`}>{aiWinBack.author} ({aiWinBack.rating} ★)</p>
@@ -697,6 +692,10 @@ export default function Home() {
                       <p className="font-bold text-xs text-blue-600 mb-1">{aiReviewIsAmplifier ? "AI Suggested Reply" : "AI Generated Reply"}</p>
                       <p className="text-sm font-medium">{aiWinBack.ai_response}</p>
                     </div>
+                  </div>
+                ) : (
+                  <div className="flex-1 bg-green-50 border-2 border-black p-4 font-bold text-sm leading-snug">
+                    No review with enough text was available for an AI reply. When a detailed review appears, this preview will show a specific response the owner can post.
                   </div>
                 )}
               </div>
@@ -711,7 +710,7 @@ export default function Home() {
                           <span className="font-bold">{r.author}</span>
                           <span className="font-black bg-white px-2 border-2 border-black">{r.rating} ★</span>
                         </div>
-                        <p className="text-sm line-clamp-3">{r.text}</p>
+                        <p className="text-sm leading-snug break-words">{r.text}</p>
                       </div>
                     ))
                   ) : (
@@ -751,16 +750,16 @@ export default function Home() {
                     <div key={idx} className="border-4 border-black p-5 bg-gray-50 text-center">
                       <p className="text-5xl font-black mb-4">{idx + 1}</p>
                       <p className="font-black uppercase text-red-600 mb-3">
-                        {isGrowthMode ? growthSolutionLabels[idx] : shortText(item.problem, 55)}
+                        {isGrowthMode ? growthSolutionLabels[idx] : displayText(item.problem)}
                       </p>
                       <ArrowRight className="mx-auto my-4" size={34} />
                       <p className="font-black text-blue-600 text-sm uppercase mb-2">
                         {ownerFeatureLabels[idx] ?? "Owner.com feature"}
                       </p>
                       <p className="font-black text-sm leading-snug mb-3">
-                        {firstSentence(item.owner_solution, 105)}
+                        {displayText(item.owner_solution)}
                       </p>
-                      <p className="font-bold text-sm leading-snug">{firstSentence(item.dream_outcome, 95)}</p>
+                      <p className="font-bold text-sm leading-snug">{displayText(item.dream_outcome)}</p>
                     </div>
                   ))}
                 </div>
