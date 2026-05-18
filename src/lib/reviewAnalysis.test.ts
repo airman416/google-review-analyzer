@@ -121,6 +121,42 @@ test("normalizeDeepAnalysis fills missing required sections", () => {
   assert.ok(normalized.confidence_notes.length > 0);
 });
 
+test("normalizeDeepAnalysis ignores meaningless terse AI summary text", () => {
+  const fallback = buildFallbackDeepAnalysis({
+    restaurantName: "Test Cafe",
+    currentRating: 4.7,
+    reviewCount: 80,
+    topComplaint: "No major complaints found",
+    negativeReviewCount: 0,
+    competitorAverage: 4.8,
+    competitorName: "nearby competitors",
+    revenueAssessment: calculateRevenueAssessment(
+      [{ rating: 5, text: "Great food and friendly staff." }],
+      45
+    ),
+  });
+
+  const normalized = normalizeDeepAnalysis(
+    {
+      executive_summary: "J.",
+      critical_findings: ["A"],
+      response_quality_audit: {
+        summary: "B",
+        improved_response: "C",
+        recovery_offer: "D",
+      },
+    },
+    fallback
+  );
+
+  assert.equal(normalized.executive_summary, fallback.executive_summary);
+  assert.deepEqual(normalized.critical_findings, fallback.critical_findings);
+  assert.equal(
+    normalized.response_quality_audit.improved_response,
+    fallback.response_quality_audit.improved_response
+  );
+});
+
 test("buildDeepAnalysisPrompt asks for evidence and Owner.com mapping", () => {
   const prompt = buildDeepAnalysisPrompt({
     restaurantName: "Test Cafe",

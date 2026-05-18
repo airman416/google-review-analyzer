@@ -2,6 +2,11 @@ import { ApifyClient } from "apify-client";
 import type { Request, Response } from "express";
 
 import {
+  createLlmProgressTracker,
+  encodeSseEvent,
+  extractOpenRouterDeltaContent,
+} from "../../src/lib/analysisStream";
+import {
   buildAiReviewReply,
   buildDeepAnalysisPrompt,
   buildFallbackDeepAnalysis,
@@ -21,6 +26,7 @@ import { supabase } from "./supabase";
 const apifyClient = new ApifyClient({
   token: process.env.APIFY_API_KEY || process.env.APIFY_API_TOKEN,
 });
+const ANALYSIS_VERSION = 3;
 
 interface ScrapedReview {
   name?: string;
@@ -63,6 +69,14 @@ interface OpenRouterResponse {
   }>;
 }
 
+interface AnalysisPayload {
+  place_id?: string;
+  name?: string;
+}
+
+type ProgressEmitter = (progress: number, message: string, detail?: string) => void;
+type RestaurantAnalyzer = (payload: AnalysisPayload, emitProgress?: ProgressEmitter) => Promise<unknown>;
+
 function getReviewRating(review: ScrapedReview): number {
   const rating = Number(review.stars ?? review.rating ?? 5);
   return Number.isFinite(rating) ? rating : 5;
@@ -84,15 +98,111 @@ function isFullCachedResult(data: unknown): boolean {
   );
 }
 
-export async function analyzeRestaurantHandler(request: Request, response: Response) {
-  try {
-    const { place_id, name } = request.body;
+export function createAnalyzeRestaurantHandler(analyzer: RestaurantAnalyzer = analyzeRestaurant) {
+  return async function analyzeRestaurantHandler(request: Request, response: Response) {
+    try {
+      const payload = request.body as AnalysisPayload;
 
+      if (!payload.name) {
+        return response.status(400).json({ error: "name is required" });
+      }
+
+      if (request.get("accept")?.includes("text/event-stream")) {
+        return streamRestaurantAnalysis(payload, response, analyzer);
+      }
+
+      const result = await analyzer(payload);
+      return response.json(result);
+    } catch (error) {
+      console.error("Error analyzing restaurant:", error);
+      return response.status(500).json({ error: "Failed to analyze" });
+    }
+  };
+}
+
+export const analyzeRestaurantHandler = createAnalyzeRestaurantHandler();
+
+async function streamRestaurantAnalysis(payload: AnalysisPayload, response: Response, analyzer: RestaurantAnalyzer) {
+  response.status(200);
+  response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  response.setHeader("Cache-Control", "no-cache, no-transform");
+  response.setHeader("Connection", "keep-alive");
+  response.flushHeaders?.();
+
+  const send = (event: string, data: unknown) => {
+    response.write(encodeSseEvent(event, data));
+  };
+  const emitProgress: ProgressEmitter = (progress, message, detail) => {
+    send("progress", { progress, message, detail });
+  };
+
+  try {
+    emitProgress(4, "Warming up the review engine...", "Setting up the audit workspace");
+    const result = await analyzer(payload, emitProgress);
+    send("complete", { data: result });
+  } catch (error) {
+    console.error("Error analyzing restaurant:", error);
+    send("error", { message: "Failed to analyze. Please try again." });
+  } finally {
+    response.end();
+  }
+}
+
+async function readOpenRouterStream(response: globalThis.Response, emitProgress?: ProgressEmitter): Promise<string> {
+  if (!response.body) {
+    const llmData = (await response.json()) as OpenRouterResponse;
+    return llmData.choices?.[0]?.message?.content ?? "";
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const tracker = createLlmProgressTracker({ start: 72, ceiling: 96, expectedChars: 8500 });
+  let content = "";
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split(/\r?\n\r?\n/);
+    buffer = events.pop() ?? "";
+
+    for (const event of events) {
+      const delta = extractOpenRouterDeltaContent(event);
+
+      if (delta) {
+        content += delta;
+        emitProgress?.(
+          tracker.recordChunk(delta),
+          "Thinking through the action plan...",
+          "The AI is writing recommendations from the review evidence"
+        );
+      }
+    }
+  }
+
+  buffer += decoder.decode();
+  const finalDelta = extractOpenRouterDeltaContent(buffer);
+  if (finalDelta) {
+    content += finalDelta;
+    emitProgress?.(
+      tracker.recordChunk(finalDelta),
+      "Finishing the action plan...",
+      "Polishing the final recommendations"
+    );
+  }
+
+  return content;
+}
+
+async function analyzeRestaurant({ place_id, name }: AnalysisPayload, emitProgress?: ProgressEmitter) {
     if (!name) {
-      return response.status(400).json({ error: "name is required" });
+      throw new Error("name is required");
     }
 
     if (supabase) {
+      emitProgress?.(8, "Checking for a recent audit...", "Looking for a cached result");
       const { data } = await supabase
         .from("restaurant_analysis")
         .select("*")
@@ -100,7 +210,8 @@ export async function analyzeRestaurantHandler(request: Request, response: Respo
         .single();
 
       if (data && isFullCachedResult(data)) {
-        return response.json(data);
+        emitProgress?.(100, "Audit ready.", "Loaded from a recent analysis");
+        return data;
       }
     }
 
@@ -113,6 +224,7 @@ export async function analyzeRestaurantHandler(request: Request, response: Respo
     let reviewsList: ScrapedReview[] = [];
 
     try {
+      emitProgress?.(16, "Pulling recent Google reviews...", "Reading review text, ratings, and dates");
       const input = {
         startUrls: [{ url: placeUrl }],
         maxReviews: 50,
@@ -150,6 +262,8 @@ export async function analyzeRestaurantHandler(request: Request, response: Respo
     } catch (apifyError) {
       console.error("Apify Scrape Error:", apifyError);
     }
+
+    emitProgress?.(38, "Finding review patterns...", "Grouping the signals guests mention most");
 
     competitor_average = parseFloat((current_rating + 0.4).toFixed(1));
     if (competitor_average > 5) competitor_average = 5.0;
@@ -236,6 +350,7 @@ export async function analyzeRestaurantHandler(request: Request, response: Respo
 
     if (apiKey && apiKey !== "YOUR_GOOGLE_PLACES_API_KEY") {
       try {
+        emitProgress?.(48, "Checking nearby competitors...", "Comparing local restaurant context");
         const detailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${place_id}&fields=photos,geometry&key=${apiKey}`;
         const detailsResponse = await fetch(detailsUrl);
         const detailsData = (await detailsResponse.json()) as PlaceDetailsResponse;
@@ -295,6 +410,7 @@ export async function analyzeRestaurantHandler(request: Request, response: Respo
     const openRouterKey = process.env.OPENROUTER_API_KEY;
     if (openRouterKey && analysisReviews.length > 0) {
       try {
+        emitProgress?.(64, "Preparing the AI brief...", "Sending review evidence to the model");
         const prompt = buildDeepAnalysisPrompt({
           restaurantName: name,
           currentRating: current_rating,
@@ -317,6 +433,7 @@ export async function analyzeRestaurantHandler(request: Request, response: Respo
           body: JSON.stringify({
             model: "google/gemini-2.5-flash",
             response_format: { type: "json_object" },
+            stream: Boolean(emitProgress),
             messages: [{ role: "user", content: prompt }],
           }),
         });
@@ -325,15 +442,23 @@ export async function analyzeRestaurantHandler(request: Request, response: Respo
           throw new Error(`OpenRouter responded with ${openRouterResponse.status}`);
         }
 
-        const llmData = (await openRouterResponse.json()) as OpenRouterResponse;
-        if (llmData.choices?.[0]?.message?.content) {
-          const parsed = parseDeepAnalysisJson(llmData.choices[0].message.content);
+        const llmContent = emitProgress
+          ? await readOpenRouterStream(openRouterResponse, emitProgress)
+          : ((await openRouterResponse.json()) as OpenRouterResponse).choices?.[0]?.message?.content ?? "";
+
+        if (llmContent) {
+          emitProgress?.(97, "Structuring the final action plan...", "Turning AI output into the report");
+          const parsed = parseDeepAnalysisJson(llmContent);
           deep_analysis = normalizeDeepAnalysis(parsed, fallbackDeepAnalysis);
         }
       } catch (error) {
         console.error("LLM Analysis Error:", error);
       }
+    } else {
+      emitProgress?.(72, "Building a rules-based action plan...", "Using review patterns without the LLM");
     }
+
+    emitProgress?.(98, "Assembling the finished audit...", "Calculating scorecards and recommendations");
 
     if (deep_analysis.issue_clusters[0]?.label) {
       top_complaint = deep_analysis.issue_clusters[0].label;
@@ -392,14 +517,11 @@ export async function analyzeRestaurantHandler(request: Request, response: Respo
           lost_revenue_score: result.lost_revenue_score,
           deep_analysis: result.deep_analysis,
           analysis_payload: result,
-          analysis_version: 2,
+          analysis_version: ANALYSIS_VERSION,
         },
       ]);
     }
 
-    return response.json(result);
-  } catch (error) {
-    console.error("Error analyzing restaurant:", error);
-    return response.status(500).json({ error: "Failed to analyze" });
-  }
+    emitProgress?.(100, "Audit complete.", "Loading your recommendations");
+    return result;
 }

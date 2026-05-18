@@ -5,6 +5,12 @@ import { analyzeRestaurantHandler } from "./analyzeRestaurant";
 import { placesAutocompleteHandler } from "./placesAutocomplete";
 import { webhookHandler } from "./webhook";
 
+type AnalyzeRestaurantHandler = typeof analyzeRestaurantHandler;
+
+interface AppOptions {
+  analyzeRestaurantHandler?: AnalyzeRestaurantHandler;
+}
+
 function getAllowedOrigins() {
   const origin = process.env.CORS_ORIGIN;
 
@@ -15,8 +21,9 @@ function getAllowedOrigins() {
   return origin.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
-export function createApp() {
+export function createApp(options: AppOptions = {}) {
   const app = express();
+  const analyzeHandler = options.analyzeRestaurantHandler ?? analyzeRestaurantHandler;
 
   app.use(cors({ origin: getAllowedOrigins() }));
   app.use(express.json({ limit: "2mb" }));
@@ -25,7 +32,7 @@ export function createApp() {
     response.json({ status: "ok" });
   });
 
-  app.post("/api/analyze-restaurant", analyzeRestaurantHandler);
+  app.post("/api/analyze-restaurant", analyzeHandler);
   app.get("/api/places-autocomplete", placesAutocompleteHandler);
   app.post("/api/webhook", webhookHandler);
 
