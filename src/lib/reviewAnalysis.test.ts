@@ -180,6 +180,28 @@ test("buildDeepAnalysisPrompt asks for evidence and Owner.com mapping", () => {
   assert.match(prompt, /Return ONLY valid JSON/i);
 });
 
+test("buildDeepAnalysisPrompt constrains generated copy length", () => {
+  const prompt = buildDeepAnalysisPrompt({
+    restaurantName: "Test Cafe",
+    currentRating: 4.1,
+    reviewCount: 80,
+    competitorAverage: 4.5,
+    competitorName: "nearby restaurants",
+    topComplaint: "Wait Time",
+    negativeReviewCount: 1,
+    reviews: [{ rating: 2, text: "Slow service and no one apologized." }],
+    revenueAssessment: calculateRevenueAssessment(
+      [{ rating: 2, text: "Slow service and no one apologized." }],
+      45
+    ),
+  });
+
+  assert.match(prompt, /Keep copy concise/i);
+  assert.match(prompt, /executive_summary.*35 words/i);
+  assert.match(prompt, /critical_findings.*10 words/i);
+  assert.match(prompt, /issue cluster labels.*5 words/i);
+});
+
 test("growth mode avoids bad-review framing for strong restaurants", () => {
   const revenueAssessment = calculateRevenueAssessment(
     [{ rating: 5, text: "Amazing pasta and friendly staff." }],

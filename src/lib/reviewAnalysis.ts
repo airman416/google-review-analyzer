@@ -261,6 +261,13 @@ Do much more than summarize sentiment. Give the owner free value:
 - Sell the dream of the restaurant having more direct orders, more repeat customers, more 5-star proof, and less dependence on third-party marketplaces.
 - Be persuasive but credible. Do not invent exact facts that are not in the reviews. Mark estimates as directional.
 
+Keep copy concise and presentation-ready:
+- executive_summary: maximum 35 words, 1-2 punchy sentences.
+- critical_findings: maximum 3 items, each under 10 words.
+- issue cluster labels: maximum 5 words.
+- business_impact, likely_root_cause, takeaways, opportunities, and actions: one short sentence each.
+- Avoid long paragraphs, repeated context, and overexplaining obvious implications.
+
 Current framing mode: ${growthMode ? "GROWTH MODE: excellent reviews with only light low-star noise, sell the next level" : "RECOVERY MODE: visible issues to fix plus growth upside"}.
 
 Return ONLY valid JSON with this exact shape:
