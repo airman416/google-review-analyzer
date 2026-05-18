@@ -18,6 +18,7 @@ import {
   parseDeepAnalysisJson,
   selectAiReviewAmplifierReview,
   selectAiWinBackReview,
+  shouldUseAiRecoveryResponse,
   type DeepAnalysis,
   type ReviewInput,
 } from "../../src/lib/reviewAnalysis";
@@ -26,7 +27,7 @@ import { supabase } from "./supabase";
 const apifyClient = new ApifyClient({
   token: process.env.APIFY_API_KEY || process.env.APIFY_API_TOKEN,
 });
-const ANALYSIS_VERSION = 3;
+const ANALYSIS_VERSION = 5;
 
 interface ScrapedReview {
   name?: string;
@@ -90,6 +91,10 @@ function isFullCachedResult(data: unknown): boolean {
   if (!data || typeof data !== "object") return false;
 
   const candidate = data as Record<string, unknown>;
+  if (Number(candidate.analysis_version ?? 0) < ANALYSIS_VERSION) {
+    return false;
+  }
+
   return Boolean(
     candidate.current_rating &&
       candidate.deep_analysis &&
@@ -473,7 +478,18 @@ async function analyzeRestaurant({ place_id, name }: AnalysisPayload, emitProgre
       };
     });
 
-    if (ai_win_back && needsRecovery && deep_analysis.response_quality_audit.improved_response) {
+    if (
+      ai_win_back &&
+      needsRecovery &&
+      shouldUseAiRecoveryResponse(
+        {
+          author: ai_win_back.author,
+          rating: ai_win_back.rating,
+          text: ai_win_back.original_review,
+        },
+        deep_analysis.response_quality_audit.improved_response
+      )
+    ) {
       ai_win_back = {
         ...ai_win_back,
         ai_response: deep_analysis.response_quality_audit.improved_response,

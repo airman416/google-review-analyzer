@@ -14,6 +14,7 @@ import {
   calculateReviewSentiment,
   selectAiReviewAmplifierReview,
   selectAiWinBackReview,
+  shouldUseAiRecoveryResponse,
 } from "./reviewAnalysis";
 
 test("calculateRevenueAssessment does not invent negative reviews", () => {
@@ -157,6 +158,73 @@ test("normalizeDeepAnalysis ignores meaningless terse AI summary text", () => {
   );
 });
 
+test("normalizeDeepAnalysis ignores ellipsized AI summary text", () => {
+  const fallback = buildFallbackDeepAnalysis({
+    restaurantName: "Pho Basil",
+    currentRating: 4.1,
+    reviewCount: 240,
+    topComplaint: "Service Speed",
+    negativeReviewCount: 8,
+    competitorAverage: 4.6,
+    competitorName: "nearby competitors",
+    revenueAssessment: calculateRevenueAssessment(
+      [{ rating: 2, text: "Waited too long and the staff seemed overwhelmed." }],
+      45
+    ),
+  });
+
+  const normalized = normalizeDeepAnalysis(
+    {
+      executive_summary:
+        "Pho Basil has strong potential for growth but faces critical service challenges impacting customer experience and potentially costing r...",
+    },
+    fallback
+  );
+
+  assert.equal(normalized.executive_summary, fallback.executive_summary);
+  assert.doesNotMatch(normalized.executive_summary, /\.\.\.$/);
+});
+
+test("normalizeDeepAnalysis ignores ellipsized evidence and Owner fragments", () => {
+  const fallback = buildFallbackDeepAnalysis({
+    restaurantName: "Pho Basil",
+    currentRating: 4.1,
+    reviewCount: 240,
+    topComplaint: "Service Speed",
+    negativeReviewCount: 8,
+    competitorAverage: 4.6,
+    competitorName: "nearby competitors",
+    revenueAssessment: calculateRevenueAssessment(
+      [{ rating: 2, text: "Waited too long and the staff seemed overwhelmed." }],
+      45
+    ),
+  });
+
+  const normalized = normalizeDeepAnalysis(
+    {
+      review_evidence: [
+        {
+          issue: "Service Speed",
+          quote: "They were really mean and I had to wait for like an hour besides I was hungry and they treat m...",
+          rating: 2,
+          takeaway: "Guests feel ignored during waits.",
+        },
+      ],
+      owner_solution_map: [
+        {
+          problem: "Customers complain about service speed and wait times,...",
+          owner_solution: "Owner.",
+          dream_outcome: "Fewer complaints about speed and clearer communication with hungry customers.",
+        },
+      ],
+    },
+    fallback
+  );
+
+  assert.deepEqual(normalized.review_evidence, fallback.review_evidence);
+  assert.deepEqual(normalized.owner_solution_map, fallback.owner_solution_map);
+});
+
 test("buildDeepAnalysisPrompt asks for evidence and Owner.com mapping", () => {
   const prompt = buildDeepAnalysisPrompt({
     restaurantName: "Test Cafe",
@@ -200,6 +268,7 @@ test("buildDeepAnalysisPrompt constrains generated copy length", () => {
   assert.match(prompt, /executive_summary.*35 words/i);
   assert.match(prompt, /critical_findings.*10 words/i);
   assert.match(prompt, /issue cluster labels.*5 words/i);
+  assert.match(prompt, /Never end fields with "\.\.\."/i);
 });
 
 test("growth mode avoids bad-review framing for strong restaurants", () => {
@@ -328,6 +397,29 @@ test("buildAiReviewReply writes concise positive replies", () => {
   assert.doesNotMatch(reply, /\.\.\./);
   assert.match(reply, /Thank you/i);
   assert.doesNotMatch(reply, /sorry|make this right/i);
+});
+
+test("shouldUseAiRecoveryResponse rejects positive replies for negative reviews", () => {
+  const review = {
+    author: "Kenji",
+    rating: 2,
+    text: "The noodles get cut short and are clumped together",
+  };
+
+  assert.equal(
+    shouldUseAiRecoveryResponse(
+      review,
+      "Hi Stella, thank you so much for your thoughtful and detailed review! We're thrilled you enjoyed the unique Pho Mala and our Drunken Noodles."
+    ),
+    false
+  );
+  assert.equal(
+    shouldUseAiRecoveryResponse(
+      review,
+      "Hi Kenji, we are sorry the noodles were cut short and clumped together. That is not the quality we aim to serve, and we appreciate you letting us know."
+    ),
+    true
+  );
 });
 
 test("calculateReviewSentiment uses review evidence instead of only the overall rating", () => {

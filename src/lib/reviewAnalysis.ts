@@ -169,6 +169,39 @@ export function buildAiReviewReply(review: AiWinBackReviewCandidate): string {
   return `Hi ${name}, I am sorry we missed the mark. Thank you for the feedback; we would like to learn more and make your next visit better.`;
 }
 
+export function shouldUseAiRecoveryResponse(
+  review: AiWinBackReviewCandidate,
+  response: string
+): boolean {
+  if (review.rating > 3 || !hasMeaningfulText(response)) return false;
+
+  const normalizedResponse = response.toLowerCase();
+  const firstName = review.author.split(/\s+/)[0]?.toLowerCase();
+  const greetingName = normalizedResponse.match(/^hi\s+([a-z'-]+)/)?.[1];
+  if (firstName && greetingName && greetingName !== firstName) return false;
+
+  const hasRecoveryLanguage = matchesAny(normalizedResponse, [
+    "sorry",
+    "apolog",
+    "missed the mark",
+    "make this right",
+    "not our standard",
+    "not the standard",
+    "not the quality",
+    "letting us know",
+  ]);
+  const hasAmplifierLanguage = matchesAny(normalizedResponse, [
+    "thank you for the kind words",
+    "thrilled you enjoyed",
+    "we're thrilled",
+    "we are thrilled",
+    "fantastic to hear",
+    "love hearing what stood out",
+  ]);
+
+  return hasRecoveryLanguage && !hasAmplifierLanguage;
+}
+
 export function calculateReviewSentiment(reviews: ReviewInput[]): ReviewSentiment {
   const reviewsWithText = reviews.filter(hasRealReviewText);
   const foodRatings: number[] = [];
@@ -267,6 +300,7 @@ Keep copy concise and presentation-ready:
 - issue cluster labels: maximum 5 words.
 - business_impact, likely_root_cause, takeaways, opportunities, and actions: one short sentence each.
 - Avoid long paragraphs, repeated context, and overexplaining obvious implications.
+- Never end fields with "..." or an ellipsis; return complete phrases only.
 
 Current framing mode: ${growthMode ? "GROWTH MODE: excellent reviews with only light low-star noise, sell the next level" : "RECOVERY MODE: visible issues to fix plus growth upside"}.
 
@@ -627,13 +661,13 @@ export function normalizeDeepAnalysis(
     critical_findings: meaningfulStringArray(candidate.critical_findings)
       ? candidate.critical_findings
       : fallback.critical_findings,
-    issue_clusters: nonEmptyArray(candidate.issue_clusters)
+    issue_clusters: meaningfulIssueClusters(candidate.issue_clusters)
       ? candidate.issue_clusters
       : fallback.issue_clusters,
-    review_evidence: nonEmptyArray(candidate.review_evidence)
+    review_evidence: meaningfulReviewEvidence(candidate.review_evidence)
       ? candidate.review_evidence
       : fallback.review_evidence,
-    root_causes: nonEmptyArray(candidate.root_causes)
+    root_causes: meaningfulRootCauses(candidate.root_causes)
       ? candidate.root_causes
       : fallback.root_causes,
     response_quality_audit: meaningfulResponseQualityAudit(candidate.response_quality_audit)
@@ -641,16 +675,18 @@ export function normalizeDeepAnalysis(
       : fallback.response_quality_audit,
     revenue_assessment:
       candidate.revenue_assessment ?? fallback.revenue_assessment,
-    growth_opportunities: nonEmptyArray(candidate.growth_opportunities)
+    growth_opportunities: meaningfulGrowthOpportunities(candidate.growth_opportunities)
       ? candidate.growth_opportunities
       : fallback.growth_opportunities,
-    free_action_plan: nonEmptyArray(candidate.free_action_plan)
+    free_action_plan: meaningfulActionPlan(candidate.free_action_plan)
       ? candidate.free_action_plan
       : fallback.free_action_plan,
-    owner_solution_map: nonEmptyArray(candidate.owner_solution_map)
+    owner_solution_map: meaningfulOwnerSolutionMap(candidate.owner_solution_map)
       ? candidate.owner_solution_map
       : fallback.owner_solution_map,
-    owner_pitch: candidate.owner_pitch ?? fallback.owner_pitch,
+    owner_pitch: meaningfulOwnerPitch(candidate.owner_pitch)
+      ? candidate.owner_pitch
+      : fallback.owner_pitch,
     confidence_notes: nonEmptyArray(candidate.confidence_notes)
       ? candidate.confidence_notes
       : fallback.confidence_notes,
@@ -678,12 +714,119 @@ function meaningfulResponseQualityAudit(
   );
 }
 
+function meaningfulIssueClusters(
+  value: DeepAnalysis["issue_clusters"] | undefined
+): value is DeepAnalysis["issue_clusters"] {
+  return Boolean(
+    Array.isArray(value) &&
+      value.length > 0 &&
+      value.every(
+        (cluster) =>
+          hasMeaningfulText(cluster.label) &&
+          hasMeaningfulText(cluster.business_impact) &&
+          hasMeaningfulText(cluster.likely_root_cause) &&
+          meaningfulStringArray(cluster.evidence)
+      )
+  );
+}
+
+function meaningfulReviewEvidence(
+  value: DeepAnalysis["review_evidence"] | undefined
+): value is DeepAnalysis["review_evidence"] {
+  return Boolean(
+    Array.isArray(value) &&
+      value.length > 0 &&
+      value.every(
+        (evidence) =>
+          hasMeaningfulText(evidence.issue) &&
+          hasMeaningfulText(evidence.quote) &&
+          hasMeaningfulText(evidence.takeaway)
+      )
+  );
+}
+
+function meaningfulRootCauses(
+  value: DeepAnalysis["root_causes"] | undefined
+): value is DeepAnalysis["root_causes"] {
+  return Boolean(
+    Array.isArray(value) &&
+      value.length > 0 &&
+      value.every(
+        (cause) =>
+          hasMeaningfulText(cause.issue) &&
+          hasMeaningfulText(cause.hypothesis) &&
+          hasMeaningfulText(cause.why_it_matters)
+      )
+  );
+}
+
+function meaningfulGrowthOpportunities(
+  value: DeepAnalysis["growth_opportunities"] | undefined
+): value is DeepAnalysis["growth_opportunities"] {
+  return Boolean(
+    Array.isArray(value) &&
+      value.length > 0 &&
+      value.every(
+        (opportunity) =>
+          hasMeaningfulText(opportunity.area) &&
+          hasMeaningfulText(opportunity.opportunity) &&
+          hasMeaningfulText(opportunity.why_now)
+      )
+  );
+}
+
+function meaningfulActionPlan(
+  value: DeepAnalysis["free_action_plan"] | undefined
+): value is DeepAnalysis["free_action_plan"] {
+  return Boolean(
+    Array.isArray(value) &&
+      value.length > 0 &&
+      value.every(
+        (item) =>
+          hasMeaningfulText(item.timeframe) &&
+          hasMeaningfulText(item.action) &&
+          hasMeaningfulText(item.expected_impact) &&
+          hasMeaningfulText(item.metric_to_watch)
+      )
+  );
+}
+
+function meaningfulOwnerSolutionMap(
+  value: DeepAnalysis["owner_solution_map"] | undefined
+): value is DeepAnalysis["owner_solution_map"] {
+  return Boolean(
+    Array.isArray(value) &&
+      value.length > 0 &&
+      value.every(
+        (item) =>
+          hasMeaningfulText(item.problem) &&
+          hasMeaningfulText(item.owner_solution) &&
+          hasMeaningfulText(item.dream_outcome)
+      )
+  );
+}
+
+function meaningfulOwnerPitch(
+  value: DeepAnalysis["owner_pitch"] | undefined
+): value is DeepAnalysis["owner_pitch"] {
+  return Boolean(
+    value &&
+      hasMeaningfulText(value.headline) &&
+      hasMeaningfulText(value.dream_outcome) &&
+      hasMeaningfulText(value.call_to_action)
+  );
+}
+
 function hasMeaningfulText(value: unknown): value is string {
   if (typeof value !== "string") return false;
   const text = value.trim();
   const wordCount = text.split(/\s+/).filter(Boolean).length;
 
-  return text.length >= 8 && wordCount >= 2;
+  return text.length >= 8 && wordCount >= 2 && !isEllipsized(text);
+}
+
+function isEllipsized(text: string): boolean {
+  return /(?:\.\.\.|…)\s*$/.test(text);
 }
 
 function nonEmptyArray<T>(value: T[] | undefined): value is T[] {

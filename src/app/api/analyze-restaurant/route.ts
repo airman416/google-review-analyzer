@@ -19,6 +19,7 @@ import {
   parseDeepAnalysisJson,
   selectAiReviewAmplifierReview,
   selectAiWinBackReview,
+  shouldUseAiRecoveryResponse,
   type DeepAnalysis,
   type ReviewInput,
 } from '@/lib/reviewAnalysis';
@@ -26,7 +27,7 @@ import {
 const apifyClient = new ApifyClient({
     token: process.env.APIFY_API_KEY || process.env.APIFY_API_TOKEN,
 });
-const ANALYSIS_VERSION = 3;
+const ANALYSIS_VERSION = 5;
 
 interface ScrapedReview {
   name?: string;
@@ -497,7 +498,17 @@ async function analyzeRestaurant(
       };
     });
 
-    if (ai_win_back?.response_type === "win_back" && deep_analysis.response_quality_audit.improved_response) {
+    if (
+      ai_win_back?.response_type === "win_back" &&
+      shouldUseAiRecoveryResponse(
+        {
+          author: ai_win_back.author,
+          rating: ai_win_back.rating,
+          text: ai_win_back.original_review,
+        },
+        deep_analysis.response_quality_audit.improved_response
+      )
+    ) {
       ai_win_back = {
         ...ai_win_back,
         ai_response: deep_analysis.response_quality_audit.improved_response,
