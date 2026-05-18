@@ -5,9 +5,15 @@ import {
   buildFallbackDeepAnalysis,
   buildDeepAnalysisPrompt,
   calculateRevenueAssessment,
+  ensureReviewsIncludeText,
+  filterReviewsWithText,
   isGrowthMode,
   normalizeDeepAnalysis,
   parseDeepAnalysisJson,
+  buildAiReviewReply,
+  calculateReviewSentiment,
+  selectAiReviewAmplifierReview,
+  selectAiWinBackReview,
 } from "./reviewAnalysis";
 
 test("calculateRevenueAssessment does not invent negative reviews", () => {
@@ -47,7 +53,42 @@ test("buildFallbackDeepAnalysis returns useful Owner.com guidance", () => {
     )
   );
   assert.match(analysis.response_quality_audit.improved_response, /owner/i);
-  assert.match(analysis.owner_pitch.dream_outcome, /happy guest/i);
+  assert.match(analysis.owner_pitch.dream_outcome, /website or app/i);
+});
+
+test("buildFallbackDeepAnalysis explains specific Owner.com features in plain language", () => {
+  const analysis = buildFallbackDeepAnalysis({
+    restaurantName: "Lilly's Gourmet Pasta Express",
+    currentRating: 4.2,
+    reviewCount: 120,
+    topComplaint: "Service Speed",
+    negativeReviewCount: 3,
+    competitorAverage: 4.6,
+    competitorName: "best nearby restaurants",
+    revenueAssessment: calculateRevenueAssessment(
+      [
+        { rating: 2, text: "Waited forever for pickup and nobody helped us." },
+        { rating: 3, text: "Food was good but the service felt slow." },
+      ],
+      45
+    ),
+  });
+  const ownerCopy = [
+    ...analysis.owner_solution_map.flatMap((item) => [
+      item.problem,
+      item.owner_solution,
+      item.dream_outcome,
+    ]),
+    analysis.owner_pitch.dream_outcome,
+    analysis.owner_pitch.call_to_action,
+  ].join(" ");
+
+  assert.match(ownerCopy, /online ordering/i);
+  assert.match(ownerCopy, /branded app/i);
+  assert.match(ownerCopy, /email\/SMS/i);
+  assert.match(ownerCopy, /Google reviews/i);
+  assert.match(ownerCopy, /customer list/i);
+  assert.doesNotMatch(ownerCopy, /retention marketing|owned customer data|local growth levers/i);
 });
 
 test("normalizeDeepAnalysis fills missing required sections", () => {
@@ -132,7 +173,7 @@ test("growth mode avoids bad-review framing for strong restaurants", () => {
 
   assert.match(analysis.executive_summary, /next level/i);
   assert.doesNotMatch(analysis.executive_summary, /bad reviews|lost value/i);
-  assert.match(analysis.owner_pitch.call_to_action, /next level/i);
+  assert.match(analysis.owner_pitch.call_to_action, /direct orders/i);
   assert.match(prompt, /GROWTH MODE/i);
   assert.match(prompt, /do NOT frame/i);
 });
@@ -171,4 +212,87 @@ test("parseDeepAnalysisJson tolerates raw control characters from LLM output", (
 
   assert.equal(parsed.executive_summary, "Useful audit with bad control char");
   assert.deepEqual(parsed.critical_findings, ["A"]);
+});
+
+test("ensureReviewsIncludeText retries once when reviews have no real text", async () => {
+  let attempts = 0;
+  const reviews = await ensureReviewsIncludeText(
+    [{ rating: 3, text: "   " }],
+    async () => {
+      attempts += 1;
+      return [
+        { rating: 3, text: "   " },
+        { rating: 2, text: "Waited a long time before anyone helped us." },
+      ];
+    }
+  );
+
+  assert.equal(attempts, 1);
+  assert.equal(reviews[1].text, "Waited a long time before anyone helped us.");
+});
+
+test("selectAiWinBackReview ignores placeholder reviews without real text", () => {
+  const selected = selectAiWinBackReview([
+    { author: "No Text", rating: 3, text: "No text provided." },
+    { author: "Blank", rating: 2, text: " " },
+  ]);
+
+  assert.equal(selected, undefined);
+});
+
+test("selectAiWinBackReview does not treat positive reviews as recovery targets", () => {
+  const selected = selectAiWinBackReview([
+    { author: "Toby", rating: 5, text: "Always love visiting. Great patience and homemade flavors." },
+    { author: "Sam", rating: 4, text: "Good food and friendly staff." },
+  ]);
+
+  assert.equal(selected, undefined);
+});
+
+test("selectAiReviewAmplifierReview chooses a positive review with real text", () => {
+  const selected = selectAiReviewAmplifierReview([
+    { author: "No Text", rating: 5, text: "No text provided." },
+    { author: "Toby", rating: 5, text: "Always love visiting. Great patience and homemade flavors." },
+    { author: "Sam", rating: 4, text: "Good food and friendly staff." },
+  ]);
+
+  assert.equal(selected?.author, "Toby");
+});
+
+test("buildAiReviewReply writes concise positive replies", () => {
+  const reply = buildAiReviewReply({
+    author: "Toby",
+    rating: 5,
+    text: "Always love visiting. Great patience and homemade flavors.",
+  });
+
+  assert.ok(reply.length <= 165);
+  assert.doesNotMatch(reply, /\.\.\./);
+  assert.match(reply, /Thank you/i);
+  assert.doesNotMatch(reply, /sorry|make this right/i);
+});
+
+test("calculateReviewSentiment uses review evidence instead of only the overall rating", () => {
+  const sentiment = calculateReviewSentiment([
+    { rating: 5, text: "Homemade flavors were delicious and the ice cream was fresh." },
+    { rating: 2, text: "The server was rude and the wait was slow." },
+    { rating: 4, text: "Cute place with a friendly vibe." },
+  ]);
+
+  assert.equal(sentiment.topComplaint, "Customer Service");
+  assert.ok(sentiment.breakdown.food > sentiment.breakdown.service);
+  assert.ok(sentiment.breakdown.atmosphere >= 4);
+});
+
+test("filterReviewsWithText removes placeholder reviews", () => {
+  const reviews = filterReviewsWithText([
+    { author: "No Text", rating: 3, text: "No text provided." },
+    { author: "No Period", rating: 4, text: "no text provided" },
+    { author: "Blank", rating: 5, text: "   " },
+    { author: "Real", rating: 2, text: "Waited 45 minutes for pickup." },
+  ]);
+
+  assert.deepEqual(reviews, [
+    { author: "Real", rating: 2, text: "Waited 45 minutes for pickup." },
+  ]);
 });

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { Search, MapPin } from "lucide-react";
+import { buildApiUrl } from "@/lib/apiBaseUrl";
 
 interface Prediction {
   name: string;
@@ -40,10 +41,11 @@ export default function SearchBar({ onSearch }: { onSearch: (name: string, place
       }
       setIsLoading(true);
       try {
-        let url = `/api/places-autocomplete?q=${encodeURIComponent(query)}`;
+        let path = `/api/places-autocomplete?q=${encodeURIComponent(query)}`;
         if (userLocation) {
-          url += `&lat=${userLocation.lat}&lon=${userLocation.lon}`;
+          path += `&lat=${userLocation.lat}&lon=${userLocation.lon}`;
         }
+        const url = buildApiUrl(path);
         const res = await fetch(url);
         const data = (await res.json()) as { predictions?: Prediction[] };
         setPredictions(data.predictions || []);

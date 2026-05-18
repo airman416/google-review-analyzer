@@ -2,12 +2,23 @@ import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { ApifyClient } from 'apify-client';
 import {
+  createLlmProgressTracker,
+  encodeSseEvent,
+  extractOpenRouterDeltaContent,
+} from '@/lib/analysisStream';
+import {
+  buildAiReviewReply,
   buildDeepAnalysisPrompt,
   buildFallbackDeepAnalysis,
   calculateRevenueAssessment,
+  calculateReviewSentiment,
+  ensureReviewsIncludeText,
+  filterReviewsWithText,
   isGrowthMode,
   normalizeDeepAnalysis,
   parseDeepAnalysisJson,
+  selectAiReviewAmplifierReview,
+  selectAiWinBackReview,
   type DeepAnalysis,
   type ReviewInput,
 } from '@/lib/reviewAnalysis';
@@ -15,6 +26,7 @@ import {
 const apifyClient = new ApifyClient({
     token: process.env.APIFY_API_KEY || process.env.APIFY_API_TOKEN,
 });
+const ANALYSIS_VERSION = 3;
 
 interface ScrapedReview {
   name?: string;
@@ -57,6 +69,13 @@ interface OpenRouterResponse {
   }>;
 }
 
+interface AnalysisPayload {
+  place_id?: string;
+  name?: string;
+}
+
+type ProgressEmitter = (progress: number, message: string, detail?: string) => void;
+
 function getReviewRating(review: ScrapedReview): number {
   const rating = Number(review.stars ?? review.rating ?? 5);
   return Number.isFinite(rating) ? rating : 5;
@@ -78,15 +97,136 @@ function isFullCachedResult(data: unknown): boolean {
   );
 }
 
+function getFullCachedResult(data: unknown): unknown | null {
+  if (!data || typeof data !== 'object') return null;
+
+  const candidate = data as Record<string, unknown>;
+  if (Number(candidate.analysis_version ?? 0) < ANALYSIS_VERSION) {
+    return null;
+  }
+  if (isFullCachedResult(candidate.analysis_payload)) {
+    return candidate.analysis_payload;
+  }
+  if (isFullCachedResult(candidate)) {
+    return candidate;
+  }
+
+  return null;
+}
+
 export async function POST(request: Request) {
   try {
-    const { place_id, name } = await request.json();
+    const payload = (await request.json()) as AnalysisPayload;
 
-    if (!name) {
+    if (!payload.name) {
       return NextResponse.json({ error: 'name is required' }, { status: 400 });
     }
 
+    if (request.headers.get('accept')?.includes('text/event-stream')) {
+      return streamRestaurantAnalysis(payload);
+    }
+
+    const result = await analyzeRestaurant(payload);
+    return NextResponse.json(result);
+  } catch (error) {
+    console.error("Error analyzing restaurant:", error);
+    return NextResponse.json({ error: 'Failed to analyze' }, { status: 500 });
+  }
+}
+
+function streamRestaurantAnalysis(payload: AnalysisPayload) {
+  const encoder = new TextEncoder();
+
+  return new Response(
+    new ReadableStream({
+      async start(controller) {
+        const send = (event: string, data: unknown) => {
+          controller.enqueue(encoder.encode(encodeSseEvent(event, data)));
+        };
+        const emitProgress: ProgressEmitter = (progress, message, detail) => {
+          send('progress', { progress, message, detail });
+        };
+
+        try {
+          emitProgress(4, 'Warming up the review engine...', 'Setting up the audit workspace');
+          const result = await analyzeRestaurant(payload, emitProgress);
+          send('complete', { data: result });
+        } catch (error) {
+          console.error("Error analyzing restaurant:", error);
+          send('error', { message: 'Failed to analyze. Please try again.' });
+        } finally {
+          controller.close();
+        }
+      },
+    }),
+    {
+      headers: {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+      },
+    }
+  );
+}
+
+async function readOpenRouterStream(response: Response, emitProgress?: ProgressEmitter): Promise<string> {
+  if (!response.body) {
+    const llmData = (await response.json()) as OpenRouterResponse;
+    return llmData.choices?.[0]?.message?.content ?? '';
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const tracker = createLlmProgressTracker({ start: 72, ceiling: 96, expectedChars: 8500 });
+  let content = '';
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split(/\r?\n\r?\n/);
+    buffer = events.pop() ?? '';
+
+    for (const event of events) {
+      const delta = extractOpenRouterDeltaContent(event);
+
+      if (delta) {
+        content += delta;
+        emitProgress?.(
+          tracker.recordChunk(delta),
+          'Thinking through the action plan...',
+          'The AI is writing recommendations from the review evidence'
+        );
+      }
+    }
+  }
+
+  buffer += decoder.decode();
+  const finalDelta = extractOpenRouterDeltaContent(buffer);
+  if (finalDelta) {
+    content += finalDelta;
+    emitProgress?.(
+      tracker.recordChunk(finalDelta),
+      'Finishing the action plan...',
+      'Polishing the final recommendations'
+    );
+  }
+
+  return content;
+}
+
+async function analyzeRestaurant(
+  { place_id, name }: AnalysisPayload,
+  emitProgress?: ProgressEmitter
+) {
+    if (!name) {
+      throw new Error('name is required');
+    }
+
     // 1. Check cache (Supabase)
+    emitProgress?.(8, 'Checking for a recent audit...', 'Looking for a cached result');
     if (process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_URL !== 'https://dummy.supabase.co') {
       const { data } = await supabase
         .from('restaurant_analysis')
@@ -94,10 +234,10 @@ export async function POST(request: Request) {
         .eq('place_id', place_id)
         .single();
       
-      if (data) {
-        if (isFullCachedResult(data)) {
-          return NextResponse.json(data);
-        }
+      const cachedResult = getFullCachedResult(data);
+      if (cachedResult) {
+        emitProgress?.(100, 'Audit ready.', 'Loaded from a recent analysis');
+        return cachedResult;
       }
     }
 
@@ -111,6 +251,7 @@ export async function POST(request: Request) {
 
     // 2. Fetch Google Reviews via Apify
     try {
+        emitProgress?.(16, 'Pulling recent Google reviews...', 'Reading review text, ratings, and dates');
         const input = {
             startUrls: [{ url: placeUrl }],
             maxReviews: 50, // Keep this low during development to save money
@@ -123,6 +264,15 @@ export async function POST(request: Request) {
         
         if (items && items.length > 0) {
             reviewsList = items as ScrapedReview[];
+            reviewsList = await ensureReviewsIncludeText(reviewsList, async () => {
+              const retryInput = {
+                ...input,
+                maxReviews: 100,
+              };
+              const retryRun = await apifyClient.actor('compass/google-maps-reviews-scraper').call(retryInput);
+              const { items: retryItems } = await apifyClient.dataset(retryRun.defaultDatasetId).listItems();
+              return (retryItems ?? []) as ScrapedReview[];
+            });
             
             // Apify usually includes totalScore and reviewsCount on each review item representing the place's overall stats
             const firstItem = reviewsList[0];
@@ -144,37 +294,30 @@ export async function POST(request: Request) {
         // Fallback to mock data if Apify fails
     }
 
+    emitProgress?.(38, 'Finding review patterns...', 'Grouping the signals guests mention most');
+
     // 3. Competitor Data (Mocked for now since SerpApi key isn't provided)
     // Could be expanded later
     competitor_average = parseFloat((current_rating + 0.4).toFixed(1));
     if (competitor_average > 5) competitor_average = 5.0;
 
-    // 4. Sentiment Analysis (Lightweight LLM/Prompt simulation)
-    const negativeReviews = reviewsList.filter((r) => getReviewRating(r) <= 3);
-    if (negativeReviews.length > 0) {
-      const text = negativeReviews.map((r) => (r.text || '').toLowerCase()).join(' ');
-      if (text.includes('cold') || text.includes('temperature')) top_complaint = 'Food Quality (Temperature)';
-      else if (text.includes('slow') || text.includes('wait') || text.includes('hour')) top_complaint = 'Service Speed';
-      else if (text.includes('rude') || text.includes('attitude') || text.includes('manager')) top_complaint = 'Customer Service';
-      else if (text.includes('expensive') || text.includes('price')) top_complaint = 'Overpriced';
-      else if (text.includes('dirty') || text.includes('clean')) top_complaint = 'Cleanliness';
-    } else if (reviewsList.length > 0) {
-       top_complaint = 'No major complaints found';
-    }
-
-    const recent_reviews = reviewsList.slice(0, 5).map((r) => ({
+    const reviewsWithText = filterReviewsWithText(reviewsList);
+    const recent_reviews = reviewsWithText.slice(0, 5).map((r) => ({
       author: r.name || 'Google Reviewer',
       rating: getReviewRating(r),
       text: getReviewText(r),
       date: r.publishedAtDate || r.date || new Date().toISOString().split('T')[0]
     }));
 
-    // Mocking sentiment breakdown for now based on current_rating
-    const sentiment_breakdown = {
-      service: Math.max(1, parseFloat((current_rating - 0.5).toFixed(1))),
-      food: Math.min(5, parseFloat((current_rating + 0.3).toFixed(1))),
-      atmosphere: current_rating
-    };
+    const analysisReviews: ReviewInput[] = reviewsWithText.map((review) => ({
+      author: review.name || 'Google Reviewer',
+      rating: getReviewRating(review),
+      text: getReviewText(review),
+      date: review.publishedAtDate || review.date,
+    }));
+    const reviewSentiment = calculateReviewSentiment(analysisReviews);
+    top_complaint = reviewSentiment.topComplaint;
+    const sentiment_breakdown = reviewSentiment.breakdown;
 
     // 1. Trend Data (Mocked recent dip)
     const trend_data = [
@@ -187,12 +330,6 @@ export async function POST(request: Request) {
 
     // 2. CLV Calculation
     const average_ticket = 45;
-    const analysisReviews: ReviewInput[] = reviewsList.map((review) => ({
-      author: review.name || 'Google Reviewer',
-      rating: getReviewRating(review),
-      text: getReviewText(review),
-      date: review.publishedAtDate || review.date,
-    }));
     const revenueAssessment = calculateRevenueAssessment(analysisReviews, average_ticket);
     const negative_review_count = revenueAssessment.negativeReviewCount;
     const growthMode = isGrowthMode({
@@ -212,25 +349,21 @@ export async function POST(request: Request) {
       narrative: revenueAssessment.narrative,
     };
 
-    // 3. Initial review response. The deep LLM audit can replace this later.
-    const needsRecovery = !growthMode;
-    const reviewForResponse =
-      recent_reviews.find((r) => r.rating <= 3) ||
-      recent_reviews.find((r) => r.rating < 5) ||
-      recent_reviews[0] || {
-        author: 'Happy Customer',
-        rating: 5,
-        text: "Great food and friendly service.",
-      };
+    // 3. Initial review response. The deep LLM audit can replace recovery replies later.
+    const recoveryReview = selectAiWinBackReview(recent_reviews);
+    const amplifierReview = selectAiReviewAmplifierReview(recent_reviews);
+    const reviewForResponse = growthMode ? amplifierReview : recoveryReview ?? amplifierReview;
+    const responseType = reviewForResponse?.rating && reviewForResponse.rating <= 3 ? "win_back" : "amplifier";
     
-    let ai_win_back = {
-      original_review: reviewForResponse.text,
-      author: reviewForResponse.author,
-      rating: reviewForResponse.rating,
-      ai_response: needsRecovery
-        ? `Hi ${reviewForResponse.author}, I am the owner and I am deeply sorry about your experience. That is completely unacceptable and not our standard. I would love the chance to make this right. Please reach out to me directly so I can personally learn what happened and improve your next visit.`
-        : `Hi ${reviewForResponse.author}, thank you for the kind words. We are grateful you chose us and love hearing what stood out. Next time, order directly from us so we can make the experience even smoother and keep bringing you the food you already love.`
-    };
+    let ai_win_back = reviewForResponse
+      ? {
+          original_review: reviewForResponse.text,
+          author: reviewForResponse.author,
+          rating: reviewForResponse.rating,
+          response_type: responseType,
+          ai_response: buildAiReviewReply(reviewForResponse),
+        }
+      : null;
 
     let photo_url = null;
     let competitor_name = "highest-rated local restaurants";
@@ -238,6 +371,7 @@ export async function POST(request: Request) {
     
     if (apiKey && apiKey !== 'YOUR_GOOGLE_PLACES_API_KEY') {
       try {
+        emitProgress?.(48, 'Checking nearby competitors...', 'Comparing local restaurant context');
         const detailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${place_id}&fields=photos,geometry&key=${apiKey}`;
         const detailsRes = await fetch(detailsUrl);
         const detailsData = (await detailsRes.json()) as PlaceDetailsResponse;
@@ -298,8 +432,9 @@ export async function POST(request: Request) {
 
     // 6. Deep LLM Analysis via OpenRouter
     const openRouterKey = process.env.OPENROUTER_API_KEY;
-    if (openRouterKey && reviewsList.length > 0) {
+    if (openRouterKey && analysisReviews.length > 0) {
       try {
+        emitProgress?.(64, 'Preparing the AI brief...', 'Sending review evidence to the model');
         const prompt = buildDeepAnalysisPrompt({
           restaurantName: name,
           currentRating: current_rating,
@@ -322,6 +457,7 @@ export async function POST(request: Request) {
           body: JSON.stringify({
             model: "google/gemini-2.5-flash",
             response_format: { type: "json_object" },
+            stream: Boolean(emitProgress),
             messages: [{ role: "user", content: prompt }]
           })
         });
@@ -330,15 +466,23 @@ export async function POST(request: Request) {
           throw new Error(`OpenRouter responded with ${response.status}`);
         }
 
-        const llmData = (await response.json()) as OpenRouterResponse;
-        if (llmData.choices?.[0]?.message?.content) {
-          const parsed = parseDeepAnalysisJson(llmData.choices[0].message.content);
+        const llmContent = emitProgress
+          ? await readOpenRouterStream(response, emitProgress)
+          : ((await response.json()) as OpenRouterResponse).choices?.[0]?.message?.content ?? '';
+
+        if (llmContent) {
+          emitProgress?.(97, 'Structuring the final action plan...', 'Turning AI output into the report');
+          const parsed = parseDeepAnalysisJson(llmContent);
           deep_analysis = normalizeDeepAnalysis(parsed, fallbackDeepAnalysis);
         }
       } catch (err) {
         console.error("LLM Analysis Error:", err);
       }
+    } else {
+      emitProgress?.(72, 'Building a rules-based action plan...', 'Using review patterns without the LLM');
     }
+
+    emitProgress?.(98, 'Assembling the finished audit...', 'Calculating scorecards and recommendations');
 
     if (deep_analysis.issue_clusters[0]?.label) {
       top_complaint = deep_analysis.issue_clusters[0].label;
@@ -353,7 +497,7 @@ export async function POST(request: Request) {
       };
     });
 
-    if (needsRecovery && deep_analysis.response_quality_audit.improved_response) {
+    if (ai_win_back?.response_type === "win_back" && deep_analysis.response_quality_audit.improved_response) {
       ai_win_back = {
         ...ai_win_back,
         ai_response: deep_analysis.response_quality_audit.improved_response,
@@ -380,7 +524,7 @@ export async function POST(request: Request) {
       data_quality: {
         reviews_analyzed: analysisReviews.length,
         growth_mode: growthMode,
-        llm_used: Boolean(openRouterKey && reviewsList.length > 0),
+        llm_used: Boolean(openRouterKey && analysisReviews.length > 0),
         estimates_are_directional: true,
         note: "Revenue and competitor insights are directional and depend on available scraped reviews.",
       },
@@ -397,14 +541,10 @@ export async function POST(request: Request) {
         lost_revenue_score: result.lost_revenue_score,
         deep_analysis: result.deep_analysis,
         analysis_payload: result,
-        analysis_version: 2,
+        analysis_version: ANALYSIS_VERSION,
       }]);
     }
 
-    return NextResponse.json(result);
-
-  } catch (error) {
-    console.error("Error analyzing restaurant:", error);
-    return NextResponse.json({ error: 'Failed to analyze' }, { status: 500 });
-  }
+    emitProgress?.(100, 'Audit complete.', 'Loading your recommendations');
+    return result;
 }

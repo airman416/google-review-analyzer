@@ -5,7 +5,12 @@ import Image from "next/image";
 import SearchBar from "@/components/SearchBar";
 import DataCard from "@/components/DataCard";
 import LeadCaptureForm from "@/components/LeadCaptureForm";
-import { isGrowthMode as getIsGrowthMode } from "@/lib/reviewAnalysis";
+import { buildApiUrl } from "@/lib/apiBaseUrl";
+import {
+  filterReviewsWithText,
+  hasRealReviewText,
+  isGrowthMode as getIsGrowthMode,
+} from "@/lib/reviewAnalysis";
 import { TrendingDown, Star, AlertCircle, ArrowRight, ThumbsUp, MessageSquare, Lock, Activity, Calculator, Bot, Crosshair } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar } from 'recharts';
 
@@ -97,6 +102,7 @@ interface Metrics {
     original_review: string;
     author: string;
     rating: number;
+    response_type?: "win_back" | "amplifier";
     ai_response: string;
   };
   recent_reviews?: Array<{
@@ -117,39 +123,166 @@ interface Metrics {
   };
 }
 
+interface AnalysisProgressPayload {
+  progress?: number;
+  message?: string;
+  detail?: string;
+}
+
+interface AnalysisCompletePayload {
+  data?: Metrics;
+}
+
+const loadingQuips = [
+  "Thinking like a restaurant operator...",
+  "Reading between the stars...",
+  "Separating noisy reviews from real patterns...",
+  "Turning guest feedback into next steps...",
+  "Pressure-testing the action plan...",
+  "Looking for the move that matters most...",
+];
+
+function parseSsePayload(block: string) {
+  const event = block
+    .split(/\r?\n/)
+    .find((line) => line.startsWith("event: "))
+    ?.slice("event: ".length)
+    .trim();
+  const data = block
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data: "))
+    .map((line) => line.slice("data: ".length))
+    .join("\n");
+
+  if (!event || !data) return null;
+
+  try {
+    return { event, payload: JSON.parse(data) as unknown };
+  } catch {
+    return null;
+  }
+}
+
+async function readAnalysisStream(
+  response: Response,
+  handlers: {
+    onProgress: (payload: AnalysisProgressPayload) => void;
+    onComplete: (data: Metrics) => void;
+    onError: (message?: string) => void;
+  }
+) {
+  if (!response.body) {
+    handlers.onComplete((await response.json()) as Metrics);
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const processBlock = (block: string) => {
+    const parsed = parseSsePayload(block);
+    if (!parsed) return;
+
+    if (parsed.event === "progress") {
+      handlers.onProgress(parsed.payload as AnalysisProgressPayload);
+    }
+
+    if (parsed.event === "complete") {
+      const payload = parsed.payload as AnalysisCompletePayload;
+      if (payload.data) handlers.onComplete(payload.data);
+    }
+
+    if (parsed.event === "error") {
+      handlers.onError((parsed.payload as { message?: string }).message);
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const blocks = buffer.split(/\r?\n\r?\n/);
+    buffer = blocks.pop() ?? "";
+    blocks.forEach(processBlock);
+  }
+
+  buffer += decoder.decode();
+  if (buffer.trim()) processBlock(buffer);
+}
+
 export default function Home() {
   const [step, setStep] = useState<"search" | "loading" | "partial" | "full">("search");
   const [restaurantName, setRestaurantName] = useState("");
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [loadingPhase, setLoadingPhase] = useState(0);
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [loadingMessage, setLoadingMessage] = useState("Warming up the review engine...");
+  const [loadingDetail, setLoadingDetail] = useState("Setting up the audit workspace");
 
   const handleSearch = async (name: string, placeId: string) => {
     setRestaurantName(name);
     setStep("loading");
     setLoadingPhase(0);
+    setLoadingProgress(0);
+    setLoadingMessage("Warming up the review engine...");
+    setLoadingDetail("Setting up the audit workspace");
 
-    // Simulate multi-phase loading for visual effect
-    const loadingInterval = setInterval(() => {
-      setLoadingPhase((prev) => (prev < 3 ? prev + 1 : prev));
-    }, 1500);
+    const copyInterval = setInterval(() => {
+      setLoadingPhase((prev) => (prev + 1) % loadingQuips.length);
+    }, 2200);
 
     try {
-      const res = await fetch("/api/analyze-restaurant", {
+      const res = await fetch(buildApiUrl("/api/analyze-restaurant"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        },
         body: JSON.stringify({ name, place_id: placeId }),
       });
-      const data = (await res.json()) as Metrics;
-      
-      clearInterval(loadingInterval);
-      setMetrics(data);
-      setStep("partial");
+
+      if (!res.ok) {
+        throw new Error("Failed to analyze");
+      }
+
+      if (!res.headers.get("content-type")?.includes("text/event-stream")) {
+        const data = (await res.json()) as Metrics;
+        setLoadingProgress(100);
+        setLoadingMessage("Audit complete.");
+        setLoadingDetail("Loading your recommendations");
+        setMetrics(data);
+        setStep("partial");
+        return;
+      }
+
+      await readAnalysisStream(res, {
+        onProgress: (payload) => {
+          if (typeof payload.progress === "number") {
+            setLoadingProgress((current) => Math.max(current, Math.min(100, payload.progress ?? current)));
+          }
+          if (payload.message) setLoadingMessage(payload.message);
+          if (payload.detail) setLoadingDetail(payload.detail);
+        },
+        onComplete: (data) => {
+          setLoadingProgress(100);
+          setLoadingMessage("Audit complete.");
+          setLoadingDetail("Loading your recommendations");
+          setMetrics(data);
+          setStep("partial");
+        },
+        onError: (message) => {
+          throw new Error(message || "Failed to analyze");
+        },
+      });
     } catch (err) {
       console.error(err);
-      clearInterval(loadingInterval);
       setStep("search");
       alert("Failed to analyze. Please try again.");
+    } finally {
+      clearInterval(copyInterval);
     }
   };
 
@@ -158,7 +291,11 @@ export default function Home() {
   const deepAnalysis = metrics?.deep_analysis;
   const freeActionPlan = deepAnalysis?.free_action_plan ?? [];
   const ownerSolutionMap = deepAnalysis?.owner_solution_map ?? [];
-  const recentReviews = metrics?.recent_reviews ?? [];
+  const recentReviews = filterReviewsWithText(metrics?.recent_reviews ?? []);
+  const aiWinBack =
+    metrics?.ai_win_back && hasRealReviewText({ text: metrics.ai_win_back.original_review })
+      ? metrics.ai_win_back
+      : null;
   const negativeReviewCount = metrics?.clv_calculation?.negative_review_count ?? 0;
   const analyzedReviewCount =
     metrics?.data_quality?.reviews_analyzed ??
@@ -168,8 +305,14 @@ export default function Home() {
     negativeReviewCount,
     analyzedReviewCount,
   });
+  const aiReviewIsAmplifier =
+    Boolean(aiWinBack) &&
+    (aiWinBack?.response_type === "amplifier" || (aiWinBack?.rating ?? 0) >= 4 || isGrowthMode);
   const issueClusters = deepAnalysis?.issue_clusters?.slice(0, 3) ?? [];
-  const reviewEvidence = deepAnalysis?.review_evidence?.slice(0, 3) ?? [];
+  const reviewEvidence =
+    deepAnalysis?.review_evidence
+      ?.filter((evidence) => hasRealReviewText({ text: evidence.quote }))
+      .slice(0, 3) ?? [];
   const sentimentScores = [
     { label: "Food", value: metrics?.sentiment_breakdown?.food ?? 4.5, color: "bg-green-400" },
     { label: "Service", value: metrics?.sentiment_breakdown?.service ?? 3.2, color: "bg-yellow-300" },
@@ -181,6 +324,11 @@ export default function Home() {
     "More direct orders",
     "Fresh 5-star proof",
     "More repeat guests",
+  ];
+  const ownerFeatureLabels = [
+    "Google review help",
+    "Online ordering + app",
+    "Email/SMS follow-up",
   ];
   const diagnosisFindings = isGrowthMode
     ? [
@@ -199,6 +347,12 @@ export default function Home() {
     const sentence = value.match(/^[^.!?]+[.!?]/)?.[0] ?? value;
     return shortText(sentence, max);
   };
+  const loadingStages = [
+    { threshold: 16, icon: Star, label: "Pulling recent Google reviews..." },
+    { threshold: 38, icon: TrendingDown, label: "Finding review patterns..." },
+    { threshold: 64, icon: AlertCircle, label: "Preparing the AI brief..." },
+    { threshold: 96, icon: Bot, label: "Generating AI action plan..." },
+  ];
 
   return (
     <div className="min-h-screen bg-[#fdfdfd] text-black font-sans selection:bg-yellow-300 relative">
@@ -218,7 +372,7 @@ export default function Home() {
         {step === "search" && (
           <div className="text-center space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <h2 className="text-5xl md:text-7xl font-black uppercase leading-[1.1] max-w-4xl mx-auto">
-              Turn <span className="text-[#ef4444] inline-block -rotate-2 bg-black px-4 py-2 border-4 border-black shadow-[8px_8px_0px_0px_#ef4444]">Google Reviews</span><br/> Into Restaurant Growth
+              Are <span className="text-[#ef4444] inline-block -rotate-2 bg-black px-4 py-2 border-4 border-black shadow-[8px_8px_0px_0px_#ef4444]">Bad Reviews</span><br/> Costing You Business?
             </h2>
             <p className="text-xl md:text-2xl font-bold max-w-2xl mx-auto bg-yellow-100 p-4 border-2 border-black inline-block">
               Get an instant audit of your Google Business Profile and see the next growth move.
@@ -231,35 +385,52 @@ export default function Home() {
 
         {step === "loading" && (
           <div className="text-center space-y-8 py-20 animate-in fade-in duration-500">
-            <div className="inline-block p-12 border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] bg-[#facc15] relative overflow-hidden">
+            <div className="inline-block w-full max-w-3xl p-8 md:p-12 border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] bg-[#facc15] relative overflow-hidden">
               <div className="absolute top-0 left-0 h-2 bg-black animate-pulse w-full"></div>
-              <h2 className="text-4xl font-black uppercase mb-8">Analyzing {shortName}...</h2>
-              
-              <ul className="text-xl font-bold space-y-6 text-left relative z-10">
-                <li className={`flex items-center gap-4 transition-opacity duration-500 ${loadingPhase >= 0 ? "opacity-100" : "opacity-0"}`}>
-                  <div className={`p-2 border-2 border-black ${loadingPhase > 0 ? 'bg-green-400' : 'bg-white'}`}>
-                    <Star className={loadingPhase === 0 ? "animate-spin" : ""} />
-                  </div>
-                  Scraping recent Google Reviews...
-                </li>
-                <li className={`flex items-center gap-4 transition-opacity duration-500 ${loadingPhase >= 1 ? "opacity-100" : "opacity-0"}`}>
-                  <div className={`p-2 border-2 border-black ${loadingPhase > 1 ? 'bg-green-400' : 'bg-white'}`}>
-                    <TrendingDown className={loadingPhase === 1 ? "animate-bounce" : ""} />
-                  </div>
-                  Running local competitor matchup...
-                </li>
-                <li className={`flex items-center gap-4 transition-opacity duration-500 ${loadingPhase >= 2 ? "opacity-100" : "opacity-0"}`}>
-                  <div className={`p-2 border-2 border-black ${loadingPhase > 2 ? 'bg-green-400' : 'bg-white'}`}>
-                    <AlertCircle className={loadingPhase === 2 ? "animate-pulse" : ""} />
-                  </div>
-                  Finding growth opportunities...
-                </li>
-                <li className={`flex items-center gap-4 transition-opacity duration-500 ${loadingPhase >= 3 ? "opacity-100" : "opacity-0"}`}>
-                  <div className={`p-2 border-2 border-black bg-white`}>
-                    <Bot className={loadingPhase >= 3 ? "animate-pulse" : ""} />
-                  </div>
-                  Generating AI Action Plan...
-                </li>
+              <h2 className="text-4xl font-black uppercase mb-4">Analyzing {shortName}...</h2>
+              <p className="text-2xl font-black uppercase bg-white border-4 border-black px-4 py-3 inline-block">
+                {loadingMessage}
+              </p>
+              <p className="mt-4 text-lg font-bold text-black/80">{loadingDetail}</p>
+              <p className="mt-2 text-base font-black uppercase tracking-wide bg-black text-white inline-block px-3 py-1">
+                {loadingQuips[loadingPhase]}
+              </p>
+
+              <div className="mt-8 text-left">
+                <div className="flex items-end justify-between mb-2">
+                  <span className="font-black uppercase">Live AI Progress</span>
+                  <span className="font-black text-2xl">{Math.round(loadingProgress)}%</span>
+                </div>
+                <div className="h-8 border-4 border-black bg-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] overflow-hidden">
+                  <div
+                    className="h-full bg-green-400 transition-[width] duration-500 ease-out"
+                    style={{ width: `${Math.max(3, loadingProgress)}%` }}
+                  />
+                </div>
+              </div>
+
+              <ul className="text-xl font-bold space-y-5 text-left relative z-10 mt-8">
+                {loadingStages.map((stage, index) => {
+                  const Icon = stage.icon;
+                  const isComplete = loadingProgress >= stage.threshold;
+                  const isActive =
+                    !isComplete &&
+                    loadingProgress >= (loadingStages[index - 1]?.threshold ?? 0);
+
+                  return (
+                    <li
+                      key={stage.label}
+                      className={`flex items-center gap-4 transition-opacity duration-500 ${
+                        isComplete || isActive ? "opacity-100" : "opacity-50"
+                      }`}
+                    >
+                      <div className={`p-2 border-2 border-black ${isComplete ? 'bg-green-400' : 'bg-white'}`}>
+                        <Icon className={isActive ? "animate-pulse" : ""} />
+                      </div>
+                      {stage.label}
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           </div>
@@ -512,19 +683,19 @@ export default function Home() {
             {/* Row 4: AI Win-Back & Recent Reviews */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div className="bg-white border-4 border-black p-6 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] flex flex-col">
-                <h3 className="text-2xl font-black uppercase mb-6 flex items-center gap-2"><Bot /> {isGrowthMode ? "AI Review Amplifier" : "AI Win-Back Preview"}</h3>
+                <h3 className="text-2xl font-black uppercase mb-6 flex items-center gap-2"><Bot /> {aiReviewIsAmplifier ? "AI Review Amplifier" : "AI Win-Back Preview"}</h3>
                 
-                {metrics.ai_win_back && (
+                {aiWinBack && (
                   <div className="space-y-6">
-                    <div className={`${isGrowthMode ? "bg-green-50 border-green-200" : "bg-red-50 border-red-200"} p-4 border-2 rounded-bl-none`}>
-                      <p className={`font-bold text-xs mb-1 ${isGrowthMode ? "text-green-700" : "text-red-600"}`}>{metrics.ai_win_back.author} ({metrics.ai_win_back.rating} ★)</p>
-                      <p className="text-sm italic">&quot;{metrics.ai_win_back.original_review}&quot;</p>
+                    <div className={`${aiReviewIsAmplifier ? "bg-green-50 border-green-200" : "bg-red-50 border-red-200"} p-4 border-2 rounded-bl-none`}>
+                      <p className={`font-bold text-xs mb-1 ${aiReviewIsAmplifier ? "text-green-700" : "text-red-600"}`}>{aiWinBack.author} ({aiWinBack.rating} ★)</p>
+                      <p className="text-sm italic">&quot;{aiWinBack.original_review}&quot;</p>
                     </div>
                     
                     <div className="bg-blue-50 p-4 border-2 border-blue-200 rounded-br-none ml-8 relative">
                       <div className="absolute -left-6 top-4 bg-blue-500 text-white p-1 rounded-full"><Bot size={16} /></div>
-                      <p className="font-bold text-xs text-blue-600 mb-1">{isGrowthMode ? "AI Suggested Reply" : "AI Generated Reply"}</p>
-                      <p className="text-sm font-medium">{shortText(metrics.ai_win_back.ai_response, 190)}</p>
+                      <p className="font-bold text-xs text-blue-600 mb-1">{aiReviewIsAmplifier ? "AI Suggested Reply" : "AI Generated Reply"}</p>
+                      <p className="text-sm font-medium">{aiWinBack.ai_response}</p>
                     </div>
                   </div>
                 )}
@@ -583,8 +754,13 @@ export default function Home() {
                         {isGrowthMode ? growthSolutionLabels[idx] : shortText(item.problem, 55)}
                       </p>
                       <ArrowRight className="mx-auto my-4" size={34} />
-                      <p className="font-black text-blue-600 mb-3">Owner.com</p>
-                      <p className="font-bold text-sm leading-snug">{item.dream_outcome}</p>
+                      <p className="font-black text-blue-600 text-sm uppercase mb-2">
+                        {ownerFeatureLabels[idx] ?? "Owner.com feature"}
+                      </p>
+                      <p className="font-black text-sm leading-snug mb-3">
+                        {firstSentence(item.owner_solution, 105)}
+                      </p>
+                      <p className="font-bold text-sm leading-snug">{firstSentence(item.dream_outcome, 95)}</p>
                     </div>
                   ))}
                 </div>

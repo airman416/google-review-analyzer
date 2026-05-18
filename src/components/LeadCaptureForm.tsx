@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { buildApiUrl } from "@/lib/apiBaseUrl";
 
 interface LeadCaptureFormProps {
   restaurantName: string;
@@ -29,7 +30,7 @@ export default function LeadCaptureForm({ restaurantName, metrics, onSuccess }: 
     setError("");
 
     try {
-      const res = await fetch("/api/webhook", {
+      const res = await fetch(buildApiUrl("/api/webhook"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

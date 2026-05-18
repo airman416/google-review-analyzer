@@ -4,15 +4,19 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "backend:dev": "tsx watch backend/src/index.ts",
+    "backend:start": "tsx backend/src/index.ts",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "tsx --test src/**/*.test.ts backend/src/**/*.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.4",
     "apify-client": "^2.23.3",
     "axios": "^1.16.1",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
     "lucide-react": "^1.16.0",
     "next": "16.2.6",
     "react": "19.2.4",
@@ -22,6 +26,8 @@
   "devDependencies": {
     "@netlify/plugin-nextjs": "^5.15.11",
     "@tailwindcss/postcss": "^4",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

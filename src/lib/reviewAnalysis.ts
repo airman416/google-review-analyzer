@@ -100,6 +100,104 @@ interface PromptInput extends FallbackInput {
   reviews: ReviewInput[];
 }
 
+interface ReviewTextCandidate {
+  text?: string | null;
+}
+
+export interface AiWinBackReviewCandidate {
+  author: string;
+  rating: number;
+  text: string;
+}
+
+export interface SentimentBreakdown {
+  food: number;
+  service: number;
+  atmosphere: number;
+}
+
+export interface ReviewSentiment {
+  topComplaint: string;
+  breakdown: SentimentBreakdown;
+}
+
+export function hasRealReviewText(review: ReviewTextCandidate): boolean {
+  const text = review.text?.trim();
+  return Boolean(text && !/^no text provided\.?$/i.test(text));
+}
+
+export function filterReviewsWithText<T extends ReviewTextCandidate>(reviews: T[]): T[] {
+  return reviews.filter(hasRealReviewText);
+}
+
+export async function ensureReviewsIncludeText<T extends ReviewTextCandidate>(
+  reviews: T[],
+  loadMoreReviews: () => Promise<T[]>
+): Promise<T[]> {
+  if (reviews.some(hasRealReviewText)) {
+    return reviews;
+  }
+
+  const retriedReviews = await loadMoreReviews();
+  return retriedReviews.length > 0 ? retriedReviews : reviews;
+}
+
+export function selectAiWinBackReview<T extends AiWinBackReviewCandidate>(
+  reviews: T[]
+): T | undefined {
+  const reviewsWithText = reviews.filter(hasRealReviewText);
+  return reviewsWithText.find((review) => review.rating <= 3);
+}
+
+export function selectAiReviewAmplifierReview<T extends AiWinBackReviewCandidate>(
+  reviews: T[]
+): T | undefined {
+  const positiveReviews = reviews.filter(
+    (review) => review.rating >= 4 && hasRealReviewText(review)
+  );
+
+  return positiveReviews.find((review) => review.rating >= 5) || positiveReviews[0];
+}
+
+export function buildAiReviewReply(review: AiWinBackReviewCandidate): string {
+  const name = review.author.split(/\s+/)[0] || "there";
+
+  if (review.rating >= 4) {
+    return `Hi ${name}, thank you for the kind words. We love hearing what stood out and are grateful you chose us. We hope to welcome you back soon.`;
+  }
+
+  return `Hi ${name}, I am sorry we missed the mark. Thank you for the feedback; we would like to learn more and make your next visit better.`;
+}
+
+export function calculateReviewSentiment(reviews: ReviewInput[]): ReviewSentiment {
+  const reviewsWithText = reviews.filter(hasRealReviewText);
+  const foodRatings: number[] = [];
+  const serviceRatings: number[] = [];
+  const atmosphereRatings: number[] = [];
+
+  for (const review of reviewsWithText) {
+    const text = review.text.toLowerCase();
+    if (matchesAny(text, ["food", "flavor", "flavors", "delicious", "fresh", "homemade", "taste", "meal", "ice cream"])) {
+      foodRatings.push(review.rating);
+    }
+    if (matchesAny(text, ["service", "server", "staff", "rude", "friendly", "wait", "slow", "patience", "helped"])) {
+      serviceRatings.push(review.rating);
+    }
+    if (matchesAny(text, ["vibe", "atmosphere", "place", "clean", "dirty", "cute", "ambience", "environment"])) {
+      atmosphereRatings.push(review.rating);
+    }
+  }
+
+  return {
+    topComplaint: detectTopComplaint(reviewsWithText),
+    breakdown: {
+      food: averageRating(foodRatings, reviewsWithText),
+      service: averageRating(serviceRatings, reviewsWithText),
+      atmosphere: averageRating(atmosphereRatings, reviewsWithText),
+    },
+  };
+}
+
 export function isGrowthMode(input: GrowthModeInput): boolean {
   const currentRating = input.currentRating ?? 0;
   const analyzedReviewCount = Math.max(input.analyzedReviewCount ?? 0, input.negativeReviewCount);
@@ -158,7 +256,8 @@ Do much more than summarize sentiment. Give the owner free value:
 - Explain how these opportunities can create more revenue through stronger Google conversion, more repeat visits, direct ordering, local SEO, and customer retention.
 - Audit review response quality. In GROWTH MODE, write a warm response to the most constructive positive or mixed-positive review instead of inventing an unhappy customer.
 - Create a prioritized action plan with quick wins, 30-day moves, and system-level fixes.
-- Map each opportunity to how Owner.com helps unlock the next level through direct ordering, owned customer data, automated review generation, retention marketing, and local growth.
+- Map each opportunity to a specific Owner.com feature: online ordering, branded app, email/SMS campaigns, Google review help, customer list building, SEO pages, reporting, or order-source analytics.
+- Write the Owner.com section for a busy restaurant owner. Use plain language like "get more orders from your own website," "bring regulars back," and "see where orders came from." Avoid jargon such as "retention marketing," "owned customer data," or "growth levers."
 - Sell the dream of the restaurant having more direct orders, more repeat customers, more 5-star proof, and less dependence on third-party marketplaces.
 - Be persuasive but credible. Do not invent exact facts that are not in the reviews. Mark estimates as directional.
 
@@ -223,7 +322,7 @@ Return ONLY valid JSON with this exact shape:
   "owner_solution_map": [
     {
       "problem": "string",
-      "owner_solution": "Explain specifically how Owner.com solves this",
+      "owner_solution": "Name the specific Owner.com feature and explain it in plain language",
       "dream_outcome": "string"
     }
   ],
@@ -467,43 +566,43 @@ export function buildFallbackDeepAnalysis(input: FallbackInput): DeepAnalysis {
     ],
     owner_solution_map: [
       {
-        problem: "Happy guests are not consistently becoming public proof.",
+        problem: "Happy guests are not always leaving Google reviews.",
         owner_solution:
-          "Owner.com helps restaurants automate review generation so more satisfied customers show up on Google.",
+          "Owner.com's Google review tools help ask satisfied customers for reviews after they order.",
         dream_outcome:
-          "A steady stream of fresh 5-star reviews makes the restaurant feel like the obvious choice.",
+          "More fresh 5-star reviews make you look like the safer choice before guests visit.",
       },
       {
-        problem: "Guests may order once and disappear into third-party platforms.",
+        problem: "Third-party apps keep the customer relationship.",
         owner_solution:
-          "Owner.com helps restaurants capture direct orders and build an owned customer database.",
+          "Owner.com's online ordering and branded app send guests to your own site and add buyers to your customer list.",
         dream_outcome:
-          "Every online order becomes a customer relationship the restaurant can grow over time.",
+          "Every online order gives you a guest you can bring back without paying marketplaces again.",
       },
       {
         problem:
           !growthMode
-            ? "Unhappy guests need fast recovery before they become lost regulars."
-            : "Happy guests need a reason to order again directly.",
+            ? "First-time guests need a reason to come back."
+            : "Regulars need an easier way to reorder.",
         owner_solution:
-          "Owner.com gives restaurants the marketing and communication foundation to bring guests back.",
+          "Owner.com's email/SMS campaigns and branded app remind guests to order again.",
         dream_outcome:
           !growthMode
-            ? "A bad visit becomes a recovery moment instead of a permanent reason to choose a competitor."
-            : "Great visits turn into repeat orders, loyalty, and owned customer relationships.",
+            ? "A one-time order can turn into a repeat customer."
+            : "Great visits turn into more direct reorders from people who already like you.",
       },
     ],
     owner_pitch: {
       headline: "Owner.com turns this audit into a growth system.",
       dream_outcome:
-        "Imagine every happy guest being nudged to leave a review, every online order becoming your customer instead of a marketplace customer, and every lapsed diner getting a reason to come back.",
+        "Imagine guests ordering from your website or app, joining your customer list, getting simple email/SMS reminders, and leaving more Google reviews.",
       call_to_action:
-        "Use Owner.com to make the next level easy: more direct orders, more owned customers, more reviews, and more repeat guests.",
+        "Use Owner.com to get more direct orders, more repeat guests, and a clearer view of what is working.",
     },
     confidence_notes: [
       "This audit is based on the reviews available during the scrape and should be treated as directional, not a financial guarantee.",
       "Revenue estimates depend on ticket size, repeat rate, and how many guests are influenced by public reviews.",
-      "Owner.com recommendations are mapped to common restaurant growth levers: reviews, direct ordering, customer data, and retention.",
+      "Owner.com recommendations are mapped to its restaurant features: online ordering, branded app, customer list building, Google reviews, email/SMS, SEO, and reporting.",
     ],
   };
 }
@@ -558,4 +657,42 @@ function nonEmptyString(value: unknown): string | null {
 
 function nonEmptyArray<T>(value: T[] | undefined): value is T[] {
   return Array.isArray(value) && value.length > 0;
+}
+
+function detectTopComplaint(reviews: ReviewInput[]): string {
+  const negativeText = reviews
+    .filter((review) => review.rating <= 3)
+    .map((review) => review.text.toLowerCase())
+    .join(" ");
+
+  if (!negativeText) return "No major complaints found";
+  if (matchesAny(negativeText, ["rude", "attitude", "manager", "server", "staff"])) {
+    return "Customer Service";
+  }
+  if (matchesAny(negativeText, ["slow", "wait", "hour", "late"])) {
+    return "Service Speed";
+  }
+  if (matchesAny(negativeText, ["cold", "temperature", "stale", "undercooked", "overcooked"])) {
+    return "Food Quality";
+  }
+  if (matchesAny(negativeText, ["expensive", "price", "overpriced", "value"])) {
+    return "Overpriced";
+  }
+  if (matchesAny(negativeText, ["dirty", "clean", "bathroom"])) {
+    return "Cleanliness";
+  }
+
+  return "Guest Experience";
+}
+
+function averageRating(ratings: number[], fallbackReviews: ReviewInput[]): number {
+  const source = ratings.length > 0 ? ratings : fallbackReviews.map((review) => review.rating);
+  if (source.length === 0) return 4;
+
+  const average = source.reduce((sum, rating) => sum + rating, 0) / source.length;
+  return Math.max(1, Math.min(5, parseFloat(average.toFixed(1))));
+}
+
+function matchesAny(text: string, keywords: string[]): boolean {
+  return keywords.some((keyword) => text.includes(keyword));
 }
