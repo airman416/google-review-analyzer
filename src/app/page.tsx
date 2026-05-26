@@ -7,9 +7,11 @@ import DataCard from "@/components/DataCard";
 import LeadCaptureForm from "@/components/LeadCaptureForm";
 import { buildApiUrl } from "@/lib/apiBaseUrl";
 import {
+  buildAiReviewReply,
   filterReviewsWithText,
   hasRealReviewText,
   isGrowthMode as getIsGrowthMode,
+  selectAiReviewForResponse,
 } from "@/lib/reviewAnalysis";
 import { TrendingDown, Star, AlertCircle, ArrowRight, ThumbsUp, MessageSquare, Lock, Activity, Calculator, Bot, Crosshair } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar } from 'recharts';
@@ -292,10 +294,6 @@ export default function Home() {
   const freeActionPlan = deepAnalysis?.free_action_plan ?? [];
   const ownerSolutionMap = deepAnalysis?.owner_solution_map ?? [];
   const recentReviews = filterReviewsWithText(metrics?.recent_reviews ?? []);
-  const aiWinBack =
-    metrics?.ai_win_back && hasRealReviewText({ text: metrics.ai_win_back.original_review })
-      ? metrics.ai_win_back
-      : null;
   const negativeReviewCount = metrics?.clv_calculation?.negative_review_count ?? 0;
   const analyzedReviewCount =
     metrics?.data_quality?.reviews_analyzed ??
@@ -305,6 +303,25 @@ export default function Home() {
     negativeReviewCount,
     analyzedReviewCount,
   });
+  const apiAiWinBack =
+    metrics?.ai_win_back && hasRealReviewText({ text: metrics.ai_win_back.original_review })
+      ? metrics.ai_win_back
+      : null;
+  const fallbackAiWinBack = (() => {
+    if (apiAiWinBack || recentReviews.length === 0) return null;
+
+    const selection = selectAiReviewForResponse(recentReviews, { preferPositive: isGrowthMode });
+    if (!selection) return null;
+
+    return {
+      original_review: selection.review.text,
+      author: selection.review.author,
+      rating: selection.review.rating,
+      response_type: selection.responseType,
+      ai_response: buildAiReviewReply(selection.review),
+    };
+  })();
+  const aiWinBack = apiAiWinBack ?? fallbackAiWinBack;
   const aiReviewIsAmplifier =
     Boolean(aiWinBack) &&
     (aiWinBack?.response_type === "amplifier" || (aiWinBack?.rating ?? 0) >= 4 || isGrowthMode);

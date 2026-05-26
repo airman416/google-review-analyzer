@@ -13,6 +13,7 @@ import {
   buildAiReviewReply,
   calculateReviewSentiment,
   selectAiReviewAmplifierReview,
+  selectAiReviewForResponse,
   selectAiWinBackReview,
   shouldUseAiRecoveryResponse,
 } from "./reviewAnalysis";
@@ -384,6 +385,46 @@ test("selectAiReviewAmplifierReview chooses a positive review with real text", (
   ]);
 
   assert.equal(selected?.author, "Toby");
+});
+
+test("selectAiReviewAmplifierReview prefers the most detailed positive review", () => {
+  const selected = selectAiReviewAmplifierReview([
+    { author: "Short", rating: 5, text: "Great coffee." },
+    {
+      author: "Allison",
+      rating: 5,
+      text: "This Cafe Nero is the perfect place to go for a moment to yourself while you enjoy their wonderful coffee and pastries.",
+    },
+  ]);
+
+  assert.equal(selected?.author, "Allison");
+});
+
+test("selectAiReviewForResponse falls back to a positive review when no low-star reviews exist", () => {
+  const selected = selectAiReviewForResponse([
+    { author: "Carlos", rating: 4, text: "Good latte but pricey. Place looks great!" },
+    {
+      author: "Allison",
+      rating: 5,
+      text: "This Cafe Nero is the perfect place to go for a moment to yourself while you enjoy their wonderful coffee and pastries.",
+    },
+  ]);
+
+  assert.equal(selected?.responseType, "amplifier");
+  assert.equal(selected?.review.author, "Allison");
+});
+
+test("selectAiReviewForResponse prefers recovery in non-growth mode when both exist", () => {
+  const selected = selectAiReviewForResponse(
+    [
+      { author: "Kenji", rating: 2, text: "The noodles were clumped together and the wait was long." },
+      { author: "Allison", rating: 5, text: "Wonderful coffee and pastries with a warm fireplace." },
+    ],
+    { preferPositive: false }
+  );
+
+  assert.equal(selected?.responseType, "win_back");
+  assert.equal(selected?.review.author, "Kenji");
 });
 
 test("buildAiReviewReply writes concise positive replies", () => {

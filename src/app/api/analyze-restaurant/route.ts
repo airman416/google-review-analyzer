@@ -17,8 +17,7 @@ import {
   isGrowthMode,
   normalizeDeepAnalysis,
   parseDeepAnalysisJson,
-  selectAiReviewAmplifierReview,
-  selectAiWinBackReview,
+  selectAiReviewForResponse,
   shouldUseAiRecoveryResponse,
   type DeepAnalysis,
   type ReviewInput,
@@ -351,18 +350,17 @@ async function analyzeRestaurant(
     };
 
     // 3. Initial review response. The deep LLM audit can replace recovery replies later.
-    const recoveryReview = selectAiWinBackReview(recent_reviews);
-    const amplifierReview = selectAiReviewAmplifierReview(recent_reviews);
-    const reviewForResponse = growthMode ? amplifierReview : recoveryReview ?? amplifierReview;
-    const responseType = reviewForResponse?.rating && reviewForResponse.rating <= 3 ? "win_back" : "amplifier";
-    
-    let ai_win_back = reviewForResponse
+    const aiReviewSelection = selectAiReviewForResponse(recent_reviews, {
+      preferPositive: growthMode,
+    });
+
+    let ai_win_back = aiReviewSelection
       ? {
-          original_review: reviewForResponse.text,
-          author: reviewForResponse.author,
-          rating: reviewForResponse.rating,
-          response_type: responseType,
-          ai_response: buildAiReviewReply(reviewForResponse),
+          original_review: aiReviewSelection.review.text,
+          author: aiReviewSelection.review.author,
+          rating: aiReviewSelection.review.rating,
+          response_type: aiReviewSelection.responseType,
+          ai_response: buildAiReviewReply(aiReviewSelection.review),
         }
       : null;
 

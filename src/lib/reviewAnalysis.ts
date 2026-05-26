@@ -142,11 +142,23 @@ export async function ensureReviewsIncludeText<T extends ReviewTextCandidate>(
   return retriedReviews.length > 0 ? retriedReviews : reviews;
 }
 
+function reviewTextScore(review: ReviewTextCandidate): number {
+  return review.text?.trim().length ?? 0;
+}
+
 export function selectAiWinBackReview<T extends AiWinBackReviewCandidate>(
   reviews: T[]
 ): T | undefined {
-  const reviewsWithText = reviews.filter(hasRealReviewText);
-  return reviewsWithText.find((review) => review.rating <= 3);
+  const candidates = reviews.filter(
+    (review) => review.rating <= 3 && hasRealReviewText(review)
+  );
+
+  if (candidates.length === 0) return undefined;
+
+  return candidates.sort((left, right) => {
+    if (left.rating !== right.rating) return left.rating - right.rating;
+    return reviewTextScore(right) - reviewTextScore(left);
+  })[0];
 }
 
 export function selectAiReviewAmplifierReview<T extends AiWinBackReviewCandidate>(
@@ -156,7 +168,37 @@ export function selectAiReviewAmplifierReview<T extends AiWinBackReviewCandidate
     (review) => review.rating >= 4 && hasRealReviewText(review)
   );
 
-  return positiveReviews.find((review) => review.rating >= 5) || positiveReviews[0];
+  if (positiveReviews.length === 0) return undefined;
+
+  return positiveReviews.sort((left, right) => {
+    if (right.rating !== left.rating) return right.rating - left.rating;
+    return reviewTextScore(right) - reviewTextScore(left);
+  })[0];
+}
+
+export type AiReviewResponseType = "win_back" | "amplifier";
+
+export interface AiReviewForResponse<T extends AiWinBackReviewCandidate = AiWinBackReviewCandidate> {
+  review: T;
+  responseType: AiReviewResponseType;
+}
+
+export function selectAiReviewForResponse<T extends AiWinBackReviewCandidate>(
+  reviews: T[],
+  options: { preferPositive?: boolean } = {}
+): AiReviewForResponse<T> | undefined {
+  const recoveryReview = selectAiWinBackReview(reviews);
+  const amplifierReview = selectAiReviewAmplifierReview(reviews);
+  const review = options.preferPositive
+    ? amplifierReview ?? recoveryReview
+    : recoveryReview ?? amplifierReview;
+
+  if (!review) return undefined;
+
+  return {
+    review,
+    responseType: review.rating <= 3 ? "win_back" : "amplifier",
+  };
 }
 
 export function buildAiReviewReply(review: AiWinBackReviewCandidate): string {

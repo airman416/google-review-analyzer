@@ -16,8 +16,7 @@ import {
   isGrowthMode,
   normalizeDeepAnalysis,
   parseDeepAnalysisJson,
-  selectAiReviewAmplifierReview,
-  selectAiWinBackReview,
+  selectAiReviewForResponse,
   shouldUseAiRecoveryResponse,
   type DeepAnalysis,
   type ReviewInput,
@@ -333,19 +332,20 @@ async function analyzeRestaurant({ place_id, name }: AnalysisPayload, emitProgre
       narrative: revenueAssessment.narrative,
     };
 
-    const needsRecovery = !growthMode;
-    const reviewForResponse = needsRecovery
-      ? selectAiWinBackReview(recent_reviews)
-      : selectAiReviewAmplifierReview(recent_reviews);
+    const aiReviewSelection = selectAiReviewForResponse(recent_reviews, {
+      preferPositive: growthMode,
+    });
 
-    let ai_win_back = reviewForResponse
+    let ai_win_back = aiReviewSelection
       ? {
-          original_review: reviewForResponse.text,
-          author: reviewForResponse.author,
-          rating: reviewForResponse.rating,
-          ai_response: needsRecovery
-            ? `Hi ${reviewForResponse.author}, I am the owner and I am deeply sorry about your experience. That is completely unacceptable and not our standard. I would love the chance to make this right. Please reach out to me directly so I can personally learn what happened and improve your next visit.`
-            : buildAiReviewReply(reviewForResponse),
+          original_review: aiReviewSelection.review.text,
+          author: aiReviewSelection.review.author,
+          rating: aiReviewSelection.review.rating,
+          response_type: aiReviewSelection.responseType,
+          ai_response:
+            aiReviewSelection.responseType === "win_back"
+              ? `Hi ${aiReviewSelection.review.author}, I am the owner and I am deeply sorry about your experience. That is completely unacceptable and not our standard. I would love the chance to make this right. Please reach out to me directly so I can personally learn what happened and improve your next visit.`
+              : buildAiReviewReply(aiReviewSelection.review),
         }
       : null;
 
@@ -479,8 +479,7 @@ async function analyzeRestaurant({ place_id, name }: AnalysisPayload, emitProgre
     });
 
     if (
-      ai_win_back &&
-      needsRecovery &&
+      ai_win_back?.response_type === "win_back" &&
       shouldUseAiRecoveryResponse(
         {
           author: ai_win_back.author,
