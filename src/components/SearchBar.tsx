@@ -9,13 +9,22 @@ interface Prediction {
   place_id: string;
 }
 
-export default function SearchBar({ onSearch }: { onSearch: (name: string, placeId: string) => void }) {
-  const [query, setQuery] = useState("");
+export default function SearchBar({ onSearch, initialQuery }: { onSearch: (name: string, placeId: string) => void; initialQuery?: string }) {
+  const [query, setQuery] = useState(initialQuery ?? "");
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [userLocation, setUserLocation] = useState<{lat: number, lon: number} | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Sync if parent changes initialQuery after mount (e.g. pill click)
+  useEffect(() => {
+    if (initialQuery !== undefined) {
+      setQuery(initialQuery);
+      setTimeout(() => inputRef.current?.focus(), 50);
+    }
+  }, [initialQuery]);
 
   useEffect(() => {
     if ("geolocation" in navigator) {
@@ -92,40 +101,39 @@ export default function SearchBar({ onSearch }: { onSearch: (name: string, place
 
   return (
     <div className="relative w-full max-w-2xl mx-auto" ref={dropdownRef}>
-      <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-4 w-full">
+      <form onSubmit={handleSubmit} className="flex items-center gap-2 bg-[#eaeaeb] rounded-[24px] p-2 pl-6 focus-within:ring-4 focus-within:ring-[#094413]/10 transition-all duration-300">
         <input
           type="text"
-          placeholder="Enter restaurant name and location..."
+          placeholder="Find your restaurant"
           value={query}
+          ref={inputRef}
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => { if (predictions.length > 0) setIsDropdownOpen(true); }}
-          className="flex-1 p-4 border-brutal border-black text-lg focus:outline-none shadow-brutal translate-brutal transition-transform focus:translate-x-1 focus:translate-y-1 focus:shadow-brutal-sm"
-          style={{ borderWidth: "3px" }}
+          className="flex-1 bg-transparent py-3 text-lg text-black outline-none placeholder:text-gray-500 font-medium"
           required
         />
         <button
           type="submit"
           disabled={isLoading}
-          className="bg-primary text-black p-4 font-bold text-lg border-brutal border-black flex items-center justify-center gap-2 hover:bg-yellow-400 active:translate-x-1 active:translate-y-1 shadow-brutal active:shadow-brutal-sm transition-all"
-          style={{ borderWidth: "3px" }}
+          title="Analyze Now"
+          className="bg-primary hover:bg-primary-hover active:scale-95 text-white w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 disabled:opacity-50 shrink-0 cursor-pointer shadow-sm"
         >
-          <Search size={24} />
-          {isLoading ? "Searching..." : "Analyze Now"}
+          <span className="text-xl font-extrabold leading-none pb-0.5">↑</span>
         </button>
       </form>
 
       {isDropdownOpen && predictions.length > 0 && (
-        <div className="absolute top-full left-0 right-0 mt-2 bg-white border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] z-50 max-h-80 overflow-y-auto">
+        <div className="absolute top-full left-0 right-0 mt-3 bg-white rounded-2xl border border-black/5 shadow-2xl z-50 max-h-80 overflow-y-auto overflow-hidden">
           {predictions.map((p) => (
             <div
               key={p.place_id}
-              className="p-4 border-b-2 border-black last:border-b-0 hover:bg-yellow-100 cursor-pointer flex items-start gap-3 transition-colors"
+              className="p-4 border-b border-gray-100 last:border-b-0 hover:bg-[#094413] hover:text-white group cursor-pointer flex items-start gap-3 transition-colors duration-150"
               onClick={() => handleSelect(p.name, p.place_id)}
             >
-              <MapPin className="mt-1 flex-shrink-0" size={20} />
+              <MapPin className="mt-1 flex-shrink-0 text-[#094413] group-hover:text-white transition-colors" size={20} />
               <div className="flex-1 text-left">
-                <span className="font-bold block">{p.name.split(',')[0]}</span>
-                <span className="text-sm text-gray-700">{p.name.split(',').slice(1).join(',')}</span>
+                <span className="font-bold text-gray-900 group-hover:text-white block transition-colors">{p.name.split(',')[0]}</span>
+                <span className="text-sm text-gray-500 group-hover:text-white/80 block transition-colors">{p.name.split(',').slice(1).join(',')}</span>
               </div>
             </div>
           ))}

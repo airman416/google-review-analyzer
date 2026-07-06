@@ -29,14 +29,29 @@ function formatValueDisplay(value: string) {
 }
 
 export default function DataCard({ title, value, subtitle, isBlurred = false, color = "white" }: DataCardProps) {
-  const bgColors = {
-    primary: "bg-[#facc15]",
-    secondary: "bg-[#3b82f6]",
-    accent: "bg-[#ef4444]",
-    white: "bg-white",
+  const bgClasses = {
+    primary: "bg-[#fbf8f5] border-[#dfdcd9]", // Sand
+    secondary: "bg-[#fafaf9] border-[#dfdcd9]", // Warm off-white
+    accent: "bg-white border-[#dfdcd9]", // White
+    white: "bg-white border-[#dfdcd9]", // White
   };
 
-  const textColor = color === "secondary" || color === "accent" ? "text-white" : "text-black";
+  const isRiskCard = title.includes("Revenue at Risk") || title.includes("Complaint");
+  const isGoodCard = title === "Your Rating" || title.includes("Opportunity") || title.includes("Growth Status");
+
+  // Determine left border highlight and text color highlight based on metrics state
+  const borderHighlight = isGoodCard 
+    ? "border-l-4 border-l-[#094413]" 
+    : isRiskCard 
+      ? "border-l-4 border-l-[#c2410c]" 
+      : "";
+
+  const valueColorClass = isGoodCard 
+    ? "text-[#094413]" 
+    : isRiskCard 
+      ? "text-[#c2410c]" 
+      : "text-gray-900";
+
   const valueStr = String(value);
   const valueRef = useRef<HTMLParagraphElement>(null);
   const [fontSizePx, setFontSizePx] = useState(MAX_FONT_PX);
@@ -94,26 +109,25 @@ export default function DataCard({ title, value, subtitle, isBlurred = false, co
 
   return (
     <div
-      className={`flex min-h-full min-w-0 flex-col gap-3 p-5 border-brutal border-black shadow-brutal relative ${bgColors[color]} ${textColor}`}
-      style={{ borderWidth: "3px" }}
+      className={`flex min-h-full min-w-0 flex-col gap-3 p-6 border rounded-xl shadow-sm hover:shadow-md transition-all duration-300 relative ${bgClasses[color]} ${borderHighlight}`}
     >
-      <h3 className="font-bold text-sm uppercase tracking-wide border-b-2 border-current pb-2 shrink-0">{title}</h3>
+      <h3 className="font-bold text-xs uppercase tracking-wider text-gray-500 border-b border-gray-100 pb-2.5 shrink-0">{title}</h3>
 
       <div className={`relative min-w-0 flex-1 ${isBlurred ? "filter blur-md select-none" : ""}`}>
         <p
           ref={valueRef}
-          className="font-black leading-snug [overflow-wrap:normal] [word-break:normal] hyphens-none"
+          className={`font-bold leading-snug [overflow-wrap:normal] [word-break:normal] hyphens-none ${valueColorClass}`}
           style={{ fontSize: `${fontSizePx}px` }}
         >
           {formatValueDisplay(valueStr)}
         </p>
-        {subtitle && <p className="text-sm font-bold mt-3 opacity-90 leading-snug">{subtitle}</p>}
+        {subtitle && <p className="text-sm font-semibold mt-2.5 text-gray-500 leading-snug">{subtitle}</p>}
       </div>
 
       {isBlurred && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/10 backdrop-blur-[2px] z-10">
-          <Lock size={32} className={textColor} />
-          <span className="font-bold mt-2 bg-black text-white px-2 py-1 uppercase text-xs">Locked</span>
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/60 backdrop-blur-[2px] rounded-xl z-10">
+          <Lock size={24} className="text-gray-400" />
+          <span className="font-bold mt-2 bg-[#094413] text-white px-2 py-0.5 rounded text-[10px] uppercase tracking-wider">Locked</span>
         </div>
       )}
     </div>

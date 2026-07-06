@@ -54,6 +54,14 @@ interface PlaceDetailsResponse {
         lng: number;
       };
     };
+    reviews?: Array<{
+      author_name?: string;
+      rating?: number;
+      text?: string;
+      relative_time_description?: string;
+    }>;
+    rating?: number;
+    user_ratings_total?: number;
   };
 }
 
@@ -291,7 +299,33 @@ async function analyzeRestaurant(
         }
     } catch (apifyError) {
         console.error("Apify Scrape Error:", apifyError);
-        // Fallback to mock data if Apify fails
+    }
+
+    // Fallback: if Apify returned no reviews, try Google Places API (returns up to 5 recent reviews)
+    if (reviewsList.length === 0) {
+      const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_PLACES_API_KEY;
+      if (apiKey && apiKey !== 'YOUR_GOOGLE_PLACES_API_KEY' && place_id) {
+        try {
+          emitProgress?.(22, 'Fetching reviews via Google Places...', 'Using Google Places API as backup source');
+          const placesUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${place_id}&fields=reviews,rating,user_ratings_total&key=${apiKey}`;
+          const placesRes = await fetch(placesUrl);
+          const placesData = (await placesRes.json()) as PlaceDetailsResponse;
+
+          if (placesData.result?.reviews && placesData.result.reviews.length > 0) {
+            reviewsList = placesData.result.reviews.map((r) => ({
+              name: r.author_name,
+              stars: r.rating,
+              text: r.text,
+              publishedAtDate: r.relative_time_description,
+            }));
+            if (placesData.result.rating) current_rating = placesData.result.rating;
+            if (placesData.result.user_ratings_total) review_count = placesData.result.user_ratings_total;
+            console.log(`Google Places fallback: got ${reviewsList.length} reviews`);
+          }
+        } catch (placesError) {
+          console.error('Google Places fallback error:', placesError);
+        }
+      }
     }
 
     emitProgress?.(38, 'Finding review patterns...', 'Grouping the signals guests mention most');

@@ -1,38 +1,101 @@
 @import "tailwindcss";
 
 @theme inline {
-  --color-primary: #facc15;
-  --color-secondary: #3b82f6;
-  --color-background: #ffffff;
-  --color-foreground: #000000;
-  --font-sans: var(--font-geist-sans);
+  --color-primary: #094413;
+  --color-primary-hover: #115c1e;
+  --color-primary-active: #1c6c29;
+  
+  --color-sidebar: #f5ece9;
+  --color-sand: #fbf8f5;
+  --color-gray-tag: #f3f3f3;
+  --color-warm-white: #fafaf9;
+  
+  --color-text-primary: #111827;
+  --color-text-secondary: #4b5563;
+  --color-border-subtle: #dfdcd9;
+  
+  --color-error: #c2410c;
+  --color-warning: #d97706;
+  --color-success: #094413;
+
+  --font-sans: "Suisse Int'l", var(--font-geist-sans), -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: var(--font-geist-mono);
 }
 
+/* Fallback utilities to prevent breaking if brutalist classes are referenced */
 @utility shadow-brutal {
-  box-shadow: 4px 4px 0px 0px rgba(0,0,0,1);
+  box-shadow: 0 4px 10px -2px rgba(0, 0, 0, 0.05);
 }
 
 @utility shadow-brutal-lg {
-  box-shadow: 8px 8px 0px 0px rgba(0,0,0,1);
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05);
 }
 
 @utility shadow-brutal-sm {
-  box-shadow: 2px 2px 0px 0px rgba(0,0,0,1);
+  box-shadow: 0 2px 5px 0 rgba(0, 0, 0, 0.03);
 }
 
 @utility translate-brutal {
-  transform: translate(2px, 2px);
-  box-shadow: 2px 2px 0px 0px rgba(0,0,0,1);
+  transform: none;
+  box-shadow: 0 2px 5px 0 rgba(0, 0, 0, 0.03);
+}
+
+@utility border-brutal {
+  border-width: 1px;
+  border-color: rgba(0, 0, 0, 0.08);
 }
 
 :root {
-  --background: #ffffff;
-  --foreground: #000000;
+  --background: #faf8f6;
+  --foreground: #111827;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* HTML-level smooth auto-sizing interpolation */
+html {
+  interpolate-size: allow-keywords;
+  scroll-behavior: smooth;
+}
+
+/* Accordion Smooth Height Transition (CSS Grid technique) */
+.accordion-wrapper {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease-out;
+  opacity: 0;
+  overflow: hidden;
+}
+
+.accordion-wrapper.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.accordion-inner {
+  min-height: 0;
+}
+
+/* Custom premium scrollbar for sidebar and dashboards */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.2);
 }
