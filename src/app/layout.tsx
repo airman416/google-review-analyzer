@@ -17,12 +17,6 @@ export const metadata: Metadata = {
   description: "Find out your restaurant's lost revenue score from negative reviews.",
 };
 
-export const viewport: Viewport = {
-  width: "device-width",
-  initialScale: 0.85,
-  maximumScale: 5,
-};
-
 export default function RootLayout({
   children,
 }: Readonly<{

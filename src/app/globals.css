@@ -63,6 +63,14 @@ html {
   scroll-behavior: smooth;
 }
 
+@media (max-width: 768px) {
+  html {
+    /* Scale down root font size on mobile to proportionally shrink all rem-based Tailwind classes */
+    font-size: 14px; 
+  }
+}
+
+
 /* Accordion Smooth Height Transition (CSS Grid technique) */
 .accordion-wrapper {
   display: grid;
