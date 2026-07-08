@@ -69,7 +69,7 @@ export default function SearchBar({ onSearch, initialQuery }: { onSearch: (name:
 
     const delayDebounce = setTimeout(() => {
       fetchPredictions();
-    }, 500);
+    }, 200);
 
     return () => clearTimeout(delayDebounce);
   }, [query, userLocation]);
