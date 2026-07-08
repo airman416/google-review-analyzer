@@ -433,9 +433,9 @@ export default function Home() {
 
         {/* ── Loading / Scanning ── split-screen layout */}
         {step === "loading" && (
-          <div className="flex h-[calc(100vh-57px)] animate-in fade-in duration-500">
+          <div className="flex flex-col md:flex-row h-[calc(100vh-57px)] animate-in fade-in duration-500">
             {/* Left sidebar */}
-            <div className="w-72 shrink-0 flex flex-col border-r border-[#dfdcd9] bg-white px-7 py-8">
+            <div className="w-full md:w-72 shrink-0 flex flex-col border-b md:border-b-0 md:border-r border-[#dfdcd9] bg-white px-4 md:px-7 py-6 md:py-8">
               <p className="text-xl font-semibold text-gray-900 mb-6">Scanning...</p>
               <div className="relative flex-1">
                 {/* vertical connector line */}
@@ -491,7 +491,7 @@ export default function Home() {
 
               {/* Phase 2: Review cards */}
               {loadingProgress >= 70 && loadingProgress < 80 && (
-                <div className="absolute inset-0 overflow-hidden flex flex-col items-center justify-center gap-4 px-12 py-8 bg-[#faf8f5]">
+                <div className="absolute inset-0 overflow-hidden flex flex-col items-center justify-center gap-4 px-4 md:px-12 py-8 bg-[#faf8f5]">
                   {(metrics?.recent_reviews ?? [
                     { author: "Alex M.", rating: 2, text: "Service was really slow and the food came out cold..." },
                     { author: "Jordan K.", rating: 3, text: "Average experience. Nothing special but not terrible." },
@@ -526,7 +526,7 @@ export default function Home() {
 
               {/* Phase 3: Analysis Brief Skeleton */}
               {loadingProgress >= 80 && loadingProgress < 90 && (
-                <div className="absolute inset-0 overflow-hidden flex flex-col items-center justify-center gap-6 px-12 py-8 bg-[#faf8f5]">
+                <div className="absolute inset-0 overflow-hidden flex flex-col items-center justify-center gap-6 px-4 md:px-12 py-8 bg-[#faf8f5]">
                   <div className="w-full max-w-lg bg-white rounded-2xl shadow-lg p-8 border border-gray-100 flex flex-col gap-6 animate-in slide-in-from-bottom-10 fade-in duration-700">
                     <div className="flex items-center gap-4">
                       <div className="w-12 h-12 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-500">
@@ -564,7 +564,7 @@ export default function Home() {
 
               {/* Phase 4: Action Plan AI */}
               {loadingProgress >= 90 && (
-                <div className="absolute inset-0 overflow-hidden flex flex-col items-center justify-center px-12 py-8 bg-[#faf8f5]">
+                <div className="absolute inset-0 overflow-hidden flex flex-col items-center justify-center px-4 md:px-12 py-8 bg-[#faf8f5]">
                   <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-[0_0_40px_-10px_rgba(9,68,19,0.15)] p-8 border border-[#094413]/20 animate-in zoom-in-95 fade-in duration-700">
                     <div className="absolute -top-4 -right-4 w-24 h-24 bg-[#094413]/5 rounded-full blur-2xl animate-pulse" />
                     <div className="absolute -bottom-4 -left-4 w-32 h-32 bg-[#094413]/5 rounded-full blur-2xl animate-pulse delay-300" />
@@ -633,9 +633,9 @@ export default function Home() {
           const offset = circ - (score / 100) * circ;
 
           return (
-            <div className="flex min-h-[calc(100vh-57px)] animate-in fade-in zoom-in-95 duration-500">
+            <div className="flex flex-col md:flex-row min-h-[calc(100vh-57px)] animate-in fade-in zoom-in-95 duration-500">
               {/* Left sidebar */}
-              <div className="w-72 shrink-0 border-r border-[#dfdcd9] bg-[#f5ece9] flex flex-col px-6 py-8">
+              <div className="w-full md:w-72 shrink-0 border-b md:border-b-0 md:border-r border-[#dfdcd9] bg-[#f5ece9] flex flex-col px-6 py-8">
                 {/* Score ring */}
                 <div className="flex flex-col items-center mb-6">
                   <svg width="140" height="140" viewBox="0 0 140 140">
@@ -701,8 +701,8 @@ export default function Home() {
               {/* Right content panel */}
               <div className="flex-1 overflow-y-auto bg-[#faf8f5]">
                 {/* Tab nav */}
-                <div className="sticky top-0 bg-[#faf8f5] border-b border-[#dfdcd9] px-8 z-10">
-                  <div className="flex gap-6">
+                <div className="sticky top-0 bg-[#faf8f5] border-b border-[#dfdcd9] px-4 md:px-8 z-10">
+                  <div className="flex gap-6 overflow-x-auto whitespace-nowrap">
                     {([ ["search", "1. Search Results"], ["guest", "2. Guest Experience"], ["listings", "3. Local Listings"] ] as const).map(([tab, label]) => (
                       <button
                         key={tab}
@@ -713,7 +713,7 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="px-8 py-8 space-y-8 max-w-4xl">
+                <div className="px-4 md:px-8 py-6 md:py-8 space-y-8 max-w-4xl">
 
                   {/* ── Tab 1: Search Results ── */}
                   {activeResultTab === "search" && (
@@ -1032,7 +1032,7 @@ export default function Home() {
                             <span className="bg-red-100 text-red-700 text-xs font-bold px-2.5 py-1 rounded-lg">Fail</span>
                           </div>
                         </div>
-                        <div className="grid grid-cols-5 gap-px bg-[#f0ede8] px-6 py-5">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-px bg-[#f0ede8] px-4 md:px-6 py-5">
                           {[
                             { label: "Time to load main content (LCP)", value: "3.5s", color: "#ea4335", shape: "square" },
                             { label: "Time to load first content (FCP)", value: "2.2s", color: "#ea4335", shape: "square" },
