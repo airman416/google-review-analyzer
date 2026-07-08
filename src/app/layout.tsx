@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -15,6 +15,12 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Owner | Google Review Analyzer",
   description: "Find out your restaurant's lost revenue score from negative reviews.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 0.85,
+  maximumScale: 5,
 };
 
 export default function RootLayout({
