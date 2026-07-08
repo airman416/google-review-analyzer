@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { ApifyClient } from 'apify-client';
+import dns from 'dns';
+
+if (typeof dns.setDefaultResultOrder === 'function') {
+  dns.setDefaultResultOrder('ipv4first');
+}
 import {
   createLlmProgressTracker,
   encodeSseEvent,
@@ -185,7 +190,7 @@ async function readOpenRouterStream(response: Response, emitProgress?: ProgressE
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  const tracker = createLlmProgressTracker({ start: 72, ceiling: 96, expectedChars: 8500 });
+  const tracker = createLlmProgressTracker({ start: 80, ceiling: 98, expectedChars: 8500 });
   let content = '';
   let buffer = '';
 
@@ -256,79 +261,120 @@ async function analyzeRestaurant(
     let competitor_average = 4.5;
     let top_complaint = "service wait time";
     let reviewsList: ScrapedReview[] = [];
+    
+    let photo_url: string | null = null;
+    let competitor_name = "highest-rated local restaurants";
+    let placesReviewsFallback: ScrapedReview[] = [];
+    let placesRatingFallback: number | null = null;
+    let placesReviewCountFallback: number | null = null;
 
-    // 2. Fetch Google Reviews via Apify
-    try {
-        emitProgress?.(16, 'Pulling recent Google reviews...', 'Reading review text, ratings, and dates');
+    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_PLACES_API_KEY;
+
+    // Start Places API fetch concurrently
+    const placesPromise = (async () => {
+      if (!apiKey || apiKey === 'YOUR_GOOGLE_PLACES_API_KEY' || !place_id) return;
+      try {
+        const detailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${place_id}&fields=photos,geometry,reviews,rating,user_ratings_total&key=${apiKey}`;
+        const detailsRes = await fetch(detailsUrl, { signal: AbortSignal.timeout(4000) });
+        const detailsData = (await detailsRes.json()) as PlaceDetailsResponse;
+
+        if (detailsData.result?.reviews && detailsData.result.reviews.length > 0) {
+          placesReviewsFallback = detailsData.result.reviews.map((r) => ({
+            name: r.author_name,
+            stars: r.rating,
+            text: r.text,
+            publishedAtDate: r.relative_time_description,
+          }));
+        }
+        if (detailsData.result?.rating) placesRatingFallback = detailsData.result.rating;
+        if (detailsData.result?.user_ratings_total) placesReviewCountFallback = detailsData.result.user_ratings_total;
+
+        const photos = detailsData.result?.photos ?? [];
+        if (photos.length > 0) {
+          const photoRef = photos[0]?.photo_reference;
+          if (photoRef) {
+            photo_url = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${photoRef}&key=${apiKey}`;
+          }
+        }
+
+        if (detailsData.result?.geometry?.location) {
+          const loc = detailsData.result.geometry.location;
+          const nearbyUrl = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${loc.lat},${loc.lng}&radius=2000&type=restaurant&key=${apiKey}`;
+          const nearbyRes = await fetch(nearbyUrl, { signal: AbortSignal.timeout(4000) });
+          const nearbyData = (await nearbyRes.json()) as NearbySearchResponse;
+          
+          if (nearbyData.results) {
+            const competitors = nearbyData.results
+              .filter((r) => r.place_id !== place_id && r.name && r.rating)
+              .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
+              .slice(0, 3)
+              .map((r) => r.name)
+              .filter((competitor): competitor is string => Boolean(competitor));
+            
+            if (competitors.length > 0) {
+              competitor_name = competitors.join(', ');
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch Google Places data", err);
+      }
+    })();
+
+    // Start Apify fetch concurrently
+    const apifyPromise = (async () => {
+      try {
+        emitProgress?.(10, 'Pulling recent Google reviews...', 'Reading review text, ratings, and dates');
         const input = {
-            startUrls: [{ url: placeUrl }],
-            maxReviews: 50, // Keep this low during development to save money
+            placeIds: [place_id],
+            maxReviews: 30, // Increased to 30 to avoid retry loop
             language: "en",
             reviewsSort: "newest",
         };
 
         const run = await apifyClient.actor('compass/google-maps-reviews-scraper').call(input);
         const { items } = await apifyClient.dataset(run.defaultDatasetId).listItems();
-        
-        if (items && items.length > 0) {
-            reviewsList = items as ScrapedReview[];
-            reviewsList = await ensureReviewsIncludeText(reviewsList, async () => {
-              const retryInput = {
-                ...input,
-                maxReviews: 100,
-              };
-              const retryRun = await apifyClient.actor('compass/google-maps-reviews-scraper').call(retryInput);
-              const { items: retryItems } = await apifyClient.dataset(retryRun.defaultDatasetId).listItems();
-              return (retryItems ?? []) as ScrapedReview[];
-            });
-            
-            // Apify usually includes totalScore and reviewsCount on each review item representing the place's overall stats
-            const firstItem = reviewsList[0];
-            if (firstItem.totalScore) current_rating = firstItem.totalScore;
-            if (firstItem.reviewsCount) review_count = firstItem.reviewsCount;
-            
-            if (review_count === 0) {
-               review_count = items.length;
-            }
-
-            // Calculate current_rating from scraped reviews if not provided by the scraper overall
-            if (!firstItem.totalScore) {
-               const totalStars = reviewsList.reduce((acc, curr) => acc + getReviewRating(curr), 0);
-               current_rating = parseFloat((totalStars / reviewsList.length).toFixed(1));
-            }
-        }
-    } catch (apifyError) {
+        return items as ScrapedReview[];
+      } catch (apifyError) {
         console.error("Apify Scrape Error:", apifyError);
+        return [];
+      }
+    })();
+
+    // Wait for both to complete
+    const [scrapedItems] = await Promise.all([apifyPromise, placesPromise]);
+
+    if (scrapedItems && scrapedItems.length > 0) {
+        reviewsList = scrapedItems;
+        
+        const firstItem = reviewsList[0];
+        if (firstItem.totalScore) current_rating = firstItem.totalScore;
+        if (firstItem.reviewsCount) review_count = firstItem.reviewsCount;
+        
+        if (review_count === 0) {
+            review_count = reviewsList.length;
+        }
+
+        if (!firstItem.totalScore) {
+            const totalStars = reviewsList.reduce((acc, curr) => acc + getReviewRating(curr), 0);
+            current_rating = parseFloat((totalStars / reviewsList.length).toFixed(1));
+        }
     }
 
-    // Fallback: if Apify returned no reviews, try Google Places API (returns up to 5 recent reviews)
-    if (reviewsList.length === 0) {
-      const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_PLACES_API_KEY;
-      if (apiKey && apiKey !== 'YOUR_GOOGLE_PLACES_API_KEY' && place_id) {
-        try {
-          emitProgress?.(22, 'Fetching reviews via Google Places...', 'Using Google Places API as backup source');
-          const placesUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${place_id}&fields=reviews,rating,user_ratings_total&key=${apiKey}`;
-          const placesRes = await fetch(placesUrl);
-          const placesData = (await placesRes.json()) as PlaceDetailsResponse;
-
-          if (placesData.result?.reviews && placesData.result.reviews.length > 0) {
-            reviewsList = placesData.result.reviews.map((r) => ({
-              name: r.author_name,
-              stars: r.rating,
-              text: r.text,
-              publishedAtDate: r.relative_time_description,
-            }));
-            if (placesData.result.rating) current_rating = placesData.result.rating;
-            if (placesData.result.user_ratings_total) review_count = placesData.result.user_ratings_total;
-            console.log(`Google Places fallback: got ${reviewsList.length} reviews`);
-          }
-        } catch (placesError) {
-          console.error('Google Places fallback error:', placesError);
-        }
+    // Fallback: if Apify returned no reviews OR no reviews with text, try Google Places API fallback
+    const hasTextReviews = reviewsList.some(r => r.text && r.text.trim().length > 0);
+    if (reviewsList.length === 0 || !hasTextReviews) {
+      if (placesReviewsFallback.length > 0) {
+        emitProgress?.(22, 'Fetching reviews via Google Places...', 'Using Google Places API as backup source');
+        reviewsList = placesReviewsFallback;
+        if (placesRatingFallback) current_rating = placesRatingFallback;
+        if (placesReviewCountFallback) review_count = placesReviewCountFallback;
+        console.log(`Google Places fallback: got ${reviewsList.length} reviews`);
       }
     }
 
-    emitProgress?.(38, 'Finding review patterns...', 'Grouping the signals guests mention most');
+    emitProgress?.(70, 'Finding review patterns...', 'Grouping the signals guests mention most');
+    await new Promise(resolve => setTimeout(resolve, 3500));
 
     // 3. Competitor Data (Mocked for now since SerpApi key isn't provided)
     // Could be expanded later
@@ -398,49 +444,6 @@ async function analyzeRestaurant(
         }
       : null;
 
-    let photo_url = null;
-    let competitor_name = "highest-rated local restaurants";
-    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_PLACES_API_KEY;
-    
-    if (apiKey && apiKey !== 'YOUR_GOOGLE_PLACES_API_KEY') {
-      try {
-        emitProgress?.(48, 'Checking nearby competitors...', 'Comparing local restaurant context');
-        const detailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${place_id}&fields=photos,geometry&key=${apiKey}`;
-        const detailsRes = await fetch(detailsUrl);
-        const detailsData = (await detailsRes.json()) as PlaceDetailsResponse;
-        const photos = detailsData.result?.photos ?? [];
-        
-        if (photos.length > 0) {
-          const photoRef = photos[0]?.photo_reference;
-          if (photoRef) {
-            photo_url = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${photoRef}&key=${apiKey}`;
-          }
-        }
-
-        if (detailsData.result?.geometry?.location) {
-          const loc = detailsData.result.geometry.location;
-          const nearbyUrl = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${loc.lat},${loc.lng}&radius=2000&type=restaurant&key=${apiKey}`;
-          const nearbyRes = await fetch(nearbyUrl);
-          const nearbyData = (await nearbyRes.json()) as NearbySearchResponse;
-          
-          if (nearbyData.results) {
-            const competitors = nearbyData.results
-              .filter((r) => r.place_id !== place_id && r.name && r.rating)
-              .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
-              .slice(0, 3)
-              .map((r) => r.name)
-              .filter((competitor): competitor is string => Boolean(competitor));
-            
-            if (competitors.length > 0) {
-              competitor_name = competitors.join(', ');
-            }
-          }
-        }
-      } catch (err) {
-        console.error("Failed to fetch Google Places data", err);
-      }
-    }
-
     // 5. Competitor Matchup
     const competitor_matchup = [
       { category: 'Food Quality', you: sentiment_breakdown.food, competitor: Math.min(5, sentiment_breakdown.food + 0.4) },
@@ -467,7 +470,7 @@ async function analyzeRestaurant(
     const openRouterKey = process.env.OPENROUTER_API_KEY;
     if (openRouterKey && analysisReviews.length > 0) {
       try {
-        emitProgress?.(64, 'Preparing the AI brief...', 'Sending review evidence to the model');
+        emitProgress?.(80, 'Preparing your analysis brief...', 'Structuring the final report');
         const prompt = buildDeepAnalysisPrompt({
           restaurantName: name,
           currentRating: current_rating,

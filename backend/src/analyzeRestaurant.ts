@@ -1,5 +1,10 @@
 import { ApifyClient } from "apify-client";
 import type { Request, Response } from "express";
+import dns from "dns";
+
+if (typeof dns.setDefaultResultOrder === "function") {
+  dns.setDefaultResultOrder("ipv4first");
+}
 
 import {
   createLlmProgressTracker,
@@ -231,7 +236,7 @@ async function analyzeRestaurant({ place_id, name }: AnalysisPayload, emitProgre
       emitProgress?.(16, "Pulling recent Google reviews...", "Reading review text, ratings, and dates");
       const input = {
         startUrls: [{ url: placeUrl }],
-        maxReviews: 50,
+        maxReviews: 15,
         language: "en",
         reviewsSort: "newest",
       };
@@ -244,7 +249,7 @@ async function analyzeRestaurant({ place_id, name }: AnalysisPayload, emitProgre
         reviewsList = await ensureReviewsIncludeText(reviewsList, async () => {
           const retryInput = {
             ...input,
-            maxReviews: 100,
+            maxReviews: 30,
           };
           const retryRun = await apifyClient.actor("compass/google-maps-reviews-scraper").call(retryInput);
           const { items: retryItems } = await apifyClient.dataset(retryRun.defaultDatasetId).listItems();
@@ -357,7 +362,7 @@ async function analyzeRestaurant({ place_id, name }: AnalysisPayload, emitProgre
       try {
         emitProgress?.(48, "Checking nearby competitors...", "Comparing local restaurant context");
         const detailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${place_id}&fields=photos,geometry&key=${apiKey}`;
-        const detailsResponse = await fetch(detailsUrl);
+        const detailsResponse = await fetch(detailsUrl, { signal: AbortSignal.timeout(4000) });
         const detailsData = (await detailsResponse.json()) as PlaceDetailsResponse;
         const photos = detailsData.result?.photos ?? [];
 
@@ -371,7 +376,7 @@ async function analyzeRestaurant({ place_id, name }: AnalysisPayload, emitProgre
         if (detailsData.result?.geometry?.location) {
           const loc = detailsData.result.geometry.location;
           const nearbyUrl = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${loc.lat},${loc.lng}&radius=2000&type=restaurant&key=${apiKey}`;
-          const nearbyResponse = await fetch(nearbyUrl);
+          const nearbyResponse = await fetch(nearbyUrl, { signal: AbortSignal.timeout(4000) });
           const nearbyData = (await nearbyResponse.json()) as NearbySearchResponse;
 
           if (nearbyData.results) {

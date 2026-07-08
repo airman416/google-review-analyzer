@@ -18,7 +18,7 @@ declare global {
 }
 
 function loadGoogleMaps(apiKey: string): Promise<void> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     if (window._mapsLoaded) { resolve(); return; }
     if (!window._mapsCallbacks) window._mapsCallbacks = [];
     window._mapsCallbacks.push(resolve);
@@ -35,17 +35,22 @@ function loadGoogleMaps(apiKey: string): Promise<void> {
       window._mapsCallbacks?.forEach((cb) => cb());
       window._mapsCallbacks = [];
     };
+    script.onerror = () => {
+      window._mapsLoading = false;
+      reject(new Error("Failed to load Google Maps script"));
+    };
     document.head.appendChild(script);
   });
 }
 
 export default function MapEmbed({ placeId, restaurantName }: MapEmbedProps) {
   const mapRef = useRef<HTMLDivElement>(null);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState(() => !process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY);
+  const [mapReady, setMapReady] = useState(false);
 
   useEffect(() => {
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
-    if (!apiKey) { setError(true); return; }
+    if (!apiKey) return;
 
     let cancelled = false;
 
@@ -54,6 +59,7 @@ export default function MapEmbed({ placeId, restaurantName }: MapEmbedProps) {
 
       const map = new window.google.maps.Map(mapRef.current, {
         zoom: 16,
+        center: { lat: 39.8283, lng: -98.5795 },
         mapTypeControl: false,
         streetViewControl: false,
         fullscreenControl: false,
@@ -68,6 +74,38 @@ export default function MapEmbed({ placeId, restaurantName }: MapEmbedProps) {
         ],
       });
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const animateMapToLocation = (location: any, title: string, customIcon?: any) => {
+        if (cancelled) return;
+        
+        map.setCenter(location);
+        map.setZoom(16);
+
+        new window.google.maps.Marker({
+          map,
+          position: location,
+          title,
+          ...(customIcon ? { icon: customIcon } : {}),
+        });
+
+        setMapReady(true);
+
+        let currentZoom = 16;
+        const targetZoom = 19;
+        
+        const zoomStep = () => {
+          if (cancelled) return;
+          if (currentZoom < targetZoom) {
+            currentZoom++;
+            map.setZoom(currentZoom);
+            setTimeout(zoomStep, 250);
+          }
+        };
+        
+        // Start zooming after the map is shown at zoom 16 for a bit
+        setTimeout(zoomStep, 800);
+      };
+
       const service = new window.google.maps.places.PlacesService(map);
 
       const isValidPlaceId = placeId && !placeId.startsWith("search-");
@@ -79,28 +117,22 @@ export default function MapEmbed({ placeId, restaurantName }: MapEmbedProps) {
           (place: any, status: string) => {
             if (cancelled) return;
             if (status === "OK" && place?.geometry?.location) {
-              map.setCenter(place.geometry.location);
-              new window.google.maps.Marker({
-                map,
-                position: place.geometry.location,
-                title: place.name,
-                icon: {
-                  path: "M15 3 L17.5 13.5 L27 15 L17.5 16.5 L15 27 L12.5 16.5 L3 15 L12.5 13.5 Z",
-                  fillColor: "#111827",
-                  fillOpacity: 1,
-                  strokeWeight: 0,
-                  scale: 1.2,
-                  anchor: new window.google.maps.Point(15, 15),
-                },
-              });
+              const customIcon = {
+                path: "M15 3 L17.5 13.5 L27 15 L17.5 16.5 L15 27 L12.5 16.5 L3 15 L12.5 13.5 Z",
+                fillColor: "#111827",
+                fillOpacity: 1,
+                strokeWeight: 0,
+                scale: 1.2,
+                anchor: new window.google.maps.Point(15, 15),
+              };
+              animateMapToLocation(place.geometry.location, place.name, customIcon);
             } else {
               // Fallback: geocode from name
               const geocoder = new window.google.maps.Geocoder();
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               geocoder.geocode({ address: restaurantName }, (results: any[], geoStatus: string) => {
                 if (cancelled || geoStatus !== "OK" || !results[0]) return;
-                const loc = results[0].geometry.location;
-                map.setCenter(loc);
-                new window.google.maps.Marker({ map, position: loc, title: restaurantName });
+                animateMapToLocation(results[0].geometry.location, restaurantName);
               });
             }
           }
@@ -108,11 +140,10 @@ export default function MapEmbed({ placeId, restaurantName }: MapEmbedProps) {
       } else {
         // Fallback: text search
         const geocoder = new window.google.maps.Geocoder();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         geocoder.geocode({ address: restaurantName }, (results: any[], status: string) => {
           if (cancelled || status !== "OK" || !results[0]) return;
-          const loc = results[0].geometry.location;
-          map.setCenter(loc);
-          new window.google.maps.Marker({ map, position: loc, title: restaurantName });
+          animateMapToLocation(results[0].geometry.location, restaurantName);
         });
       }
     }).catch(() => setError(true));
@@ -121,12 +152,29 @@ export default function MapEmbed({ placeId, restaurantName }: MapEmbedProps) {
   }, [placeId, restaurantName]);
 
   if (error) {
+    const iframeUrl = `https://maps.google.com/maps?q=${encodeURIComponent(restaurantName)}&t=&z=15&ie=UTF8&iwloc=&output=embed`;
     return (
-      <div className="w-full h-full bg-[#f0ede8] flex items-center justify-center">
-        <p className="text-sm text-gray-400">Map unavailable</p>
-      </div>
+      <iframe
+        title={restaurantName}
+        src={iframeUrl}
+        className="w-full h-full border-0"
+        allowFullScreen
+        loading="lazy"
+      />
     );
   }
 
-  return <div ref={mapRef} className="w-full h-full" />;
+  return (
+    <div className="relative w-full h-full">
+      {!mapReady && (
+        <div className="absolute inset-0 flex items-center justify-center bg-[#faf8f5]">
+          <div className="w-8 h-8 border-3 border-[#094413] border-t-transparent rounded-full animate-spin" />
+        </div>
+      )}
+      <div 
+        ref={mapRef} 
+        className={`w-full h-full transition-opacity duration-500 ${mapReady ? 'opacity-100' : 'opacity-0'}`} 
+      />
+    </div>
+  );
 }

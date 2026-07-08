@@ -21,6 +21,7 @@ export default function SearchBar({ onSearch, initialQuery }: { onSearch: (name:
   // Sync if parent changes initialQuery after mount (e.g. pill click)
   useEffect(() => {
     if (initialQuery !== undefined) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setQuery(initialQuery);
       setTimeout(() => inputRef.current?.focus(), 50);
     }

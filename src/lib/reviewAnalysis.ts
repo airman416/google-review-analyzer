@@ -343,6 +343,7 @@ Keep copy concise and presentation-ready:
 - business_impact, likely_root_cause, takeaways, opportunities, and actions: one short sentence each.
 - Avoid long paragraphs, repeated context, and overexplaining obvious implications.
 - Never end fields with "..." or an ellipsis; return complete phrases only.
+- IMPORTANT: Ensure all string values in the JSON are properly escaped. Specifically, any double quotes inside JSON string values (such as quotes in review snippets or evidence) MUST be escaped as \" or replaced with single quotes to ensure the output is valid JSON.
 
 Current framing mode: ${growthMode ? "GROWTH MODE: excellent reviews with only light low-star noise, sell the next level" : "RECOVERY MODE: visible issues to fix plus growth upside"}.
 
@@ -418,6 +419,49 @@ Return ONLY valid JSON with this exact shape:
 }`;
 }
 
+function escapeUnescapedQuotes(jsonStr: string): string {
+  let inString = false;
+  let result = "";
+  for (let i = 0; i < jsonStr.length; i++) {
+    const char = jsonStr[i];
+    const prevChar = jsonStr[i - 1];
+
+    if (char === '"' && prevChar !== '\\') {
+      if (!inString) {
+        inString = true;
+        result += char;
+      } else {
+        // Look ahead to check if this is a closing quote
+        let isClosing = false;
+        let j = i + 1;
+        while (j < jsonStr.length && /\s/.test(jsonStr[j])) {
+          j++;
+        }
+        const following = jsonStr[j];
+        if (
+          following === ":" ||
+          following === "," ||
+          following === "}" ||
+          following === "]" ||
+          following === undefined
+        ) {
+          isClosing = true;
+        }
+
+        if (isClosing) {
+          inString = false;
+          result += char;
+        } else {
+          result += '\\"';
+        }
+      }
+    } else {
+      result += char;
+    }
+  }
+  return result;
+}
+
 export function parseDeepAnalysisJson(content: string): Partial<DeepAnalysis> {
   const cleaned = content
     .replace(/```json/gi, "")
@@ -427,7 +471,16 @@ export function parseDeepAnalysisJson(content: string): Partial<DeepAnalysis> {
     )
     .trim();
 
-  return JSON.parse(cleaned) as Partial<DeepAnalysis>;
+  try {
+    return JSON.parse(cleaned) as Partial<DeepAnalysis>;
+  } catch (e) {
+    try {
+      const repaired = escapeUnescapedQuotes(cleaned);
+      return JSON.parse(repaired) as Partial<DeepAnalysis>;
+    } catch {
+      throw e;
+    }
+  }
 }
 
 export function calculateRevenueAssessment(

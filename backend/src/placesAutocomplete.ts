@@ -1,4 +1,9 @@
 import type { Request, Response } from "express";
+import dns from "dns";
+
+if (typeof dns.setDefaultResultOrder === "function") {
+  dns.setDefaultResultOrder("ipv4first");
+}
 
 interface GooglePrediction {
   description: string;
@@ -27,20 +32,25 @@ export async function placesAutocompleteHandler(request: Request, response: Resp
 
   try {
     if (apiKey && apiKey !== "YOUR_GOOGLE_PLACES_API_KEY") {
-      let url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(query)}&types=establishment&components=country:us&key=${apiKey}`;
+      try {
+        let url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(query)}&types=establishment&components=country:us&key=${apiKey}`;
 
-      if (lat && lon) {
-        url += `&location=${lat},${lon}&radius=20000`;
+        if (lat && lon) {
+          url += `&location=${lat},${lon}&radius=20000`;
+        }
+
+        const placesResponse = await fetch(url, { signal: AbortSignal.timeout(4000) });
+        const data = (await placesResponse.json()) as GoogleAutocompleteResponse;
+        const predictions = (data.predictions || []).map((item) => ({
+          name: item.description,
+          place_id: item.place_id,
+        }));
+
+        return response.json({ predictions });
+      } catch (googleError) {
+        console.error("Google Places Autocomplete failed, falling back to Nominatim:", googleError);
+        // Fall through to Nominatim code instead of returning an empty array
       }
-
-      const placesResponse = await fetch(url);
-      const data = (await placesResponse.json()) as GoogleAutocompleteResponse;
-      const predictions = (data.predictions || []).map((item) => ({
-        name: item.description,
-        place_id: item.place_id,
-      }));
-
-      return response.json({ predictions });
     }
 
     let url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&addressdetails=1&limit=5&accept-language=en&countrycodes=us`;
@@ -57,6 +67,7 @@ export async function placesAutocompleteHandler(request: Request, response: Resp
 
     const nominatimResponse = await fetch(url, {
       headers: { "User-Agent": "GoogleReviewAnalyzer/1.0" },
+      signal: AbortSignal.timeout(4000)
     });
 
     const data = (await nominatimResponse.json()) as NominatimPrediction[];
@@ -71,3 +82,4 @@ export async function placesAutocompleteHandler(request: Request, response: Resp
     return response.json({ predictions: [] });
   }
 }
+

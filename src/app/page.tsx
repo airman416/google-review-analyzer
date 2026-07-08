@@ -226,10 +226,10 @@ export default function Home() {
   const [loadingDetail, setLoadingDetail] = useState("Setting up the audit workspace");
   const [pillQuery, setPillQuery] = useState<string | undefined>(undefined);
   const [activeResultTab, setActiveResultTab] = useState<"search" | "guest" | "listings">("search");
-  const [countdown, setCountdown] = useState(39);
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
-  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const loadingStartRef = useRef<number | null>(null);
+
+  const [countdown, setCountdown] = useState(35);
+
 
   const handleSearch = async (name: string, placeId: string) => {
     setRestaurantName(name);
@@ -240,27 +240,9 @@ export default function Home() {
     setLoadingMessage("Warming up the review engine...");
     setLoadingDetail("Setting up the audit workspace");
     setActiveResultTab("search");
-    // Start progress-aware countdown
-    loadingStartRef.current = Date.now();
-    setCountdown(39);
-    if (countdownRef.current) clearInterval(countdownRef.current);
-    countdownRef.current = setInterval(() => {
-      setLoadingProgress((currentProgress) => {
-        const elapsedSec = (Date.now() - (loadingStartRef.current ?? Date.now())) / 1000;
-        if (currentProgress >= 100) {
-          setCountdown(0);
-        } else if (currentProgress > 0) {
-          // Estimate total duration from current pace, floor at 1
-          const estimatedTotal = elapsedSec / (currentProgress / 100);
-          const remaining = Math.max(1, Math.round(estimatedTotal - elapsedSec));
-          setCountdown(remaining);
-        } else {
-          // No progress yet — just count down from initial estimate
-          setCountdown((prev) => (prev > 1 ? prev - 1 : 1));
-        }
-        return currentProgress; // don't mutate progress here
-      });
-    }, 1000);
+
+
+    setCountdown(35);
 
     const copyInterval = setInterval(() => {
       setLoadingPhase((prev) => (prev + 1) % loadingQuips.length);
@@ -315,9 +297,26 @@ export default function Home() {
       alert("Failed to analyze. Please try again.");
     } finally {
       clearInterval(copyInterval);
-      if (countdownRef.current) clearInterval(countdownRef.current);
     }
   };
+
+
+  useEffect(() => {
+    if (step !== "loading") {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev > 1) {
+          return prev - 1;
+        }
+        return 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [step]);
 
   const shortName = restaurantName.split(',')[0];
   const addressInfo = restaurantName.includes(',') ? restaurantName.split(',').slice(1).join(',').trim() : "";
@@ -391,10 +390,10 @@ export default function Home() {
     metrics.trend_data[4].rating < metrics.trend_data[0].rating;
   const displayText = (value = "") => value.trim();
   const loadingStages = [
-    { threshold: 16, icon: Star, label: "Pulling recent Google reviews..." },
-    { threshold: 38, icon: TrendingDown, label: "Finding review patterns..." },
-    { threshold: 64, icon: AlertCircle, label: "Preparing your analysis brief..." },
-    { threshold: 96, icon: Bot, label: "Generating your action plan..." },
+    { threshold: 10, icon: Star, label: "Pulling recent Google reviews..." },
+    { threshold: 70, icon: TrendingDown, label: "Finding review patterns..." },
+    { threshold: 80, icon: AlertCircle, label: "Preparing your analysis brief..." },
+    { threshold: 98, icon: Bot, label: "Generating your action plan..." },
   ];
 
   return (
@@ -467,10 +466,12 @@ export default function Home() {
               </div>
               {/* Countdown card */}
               <div className="bg-white border border-[#dfdcd9] rounded-2xl p-4 mt-4">
-                <div className="h-1 bg-[#094413] rounded-full mb-3" style={{ width: `${Math.max(3, loadingProgress)}%`, transition: 'width 0.5s ease' }} />
+                <div className="h-1 bg-[#094413] rounded-full mb-3" style={{ width: `${Math.max(3, ((35 - countdown) / 35) * 100)}%`, transition: 'width 1s linear' }} />
                 <div className="flex items-center gap-2 text-sm text-gray-700">
                   <div className="w-4 h-4 border-2 border-[#094413] border-t-transparent rounded-full animate-spin shrink-0" />
-                  <span className="font-medium">{countdown} seconds remaining</span>
+                  <span className="font-medium">
+                    {countdown > 2 ? `${countdown} seconds remaining` : countdown === 2 ? "A few seconds remaining..." : "Finishing up..."}
+                  </span>
                 </div>
               </div>
             </div>
@@ -478,7 +479,7 @@ export default function Home() {
             {/* Right panel */}
             <div className="flex-1 bg-[#faf8f5] relative overflow-hidden">
               {/* Phase 1: Map — real Google Maps JS embed */}
-              {loadingProgress < 30 && (
+              {loadingProgress < 70 && (
                 <div className="absolute inset-0 flex flex-col">
                   {/* Floating name badge */}
                   <div className="absolute top-6 left-1/2 -translate-x-1/2 z-10 bg-white/90 backdrop-blur-sm border border-black/10 shadow-lg rounded-full px-5 py-2.5 flex items-center gap-2 text-sm font-medium whitespace-nowrap">
@@ -489,8 +490,8 @@ export default function Home() {
               )}
 
               {/* Phase 2: Review cards */}
-              {loadingProgress >= 30 && (
-                <div className="absolute inset-0 overflow-hidden flex flex-col items-center justify-center gap-4 px-12 py-8">
+              {loadingProgress >= 70 && loadingProgress < 80 && (
+                <div className="absolute inset-0 overflow-hidden flex flex-col items-center justify-center gap-4 px-12 py-8 bg-[#faf8f5]">
                   {(metrics?.recent_reviews ?? [
                     { author: "Alex M.", rating: 2, text: "Service was really slow and the food came out cold..." },
                     { author: "Jordan K.", rating: 3, text: "Average experience. Nothing special but not terrible." },
@@ -520,6 +521,75 @@ export default function Home() {
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+
+              {/* Phase 3: Analysis Brief Skeleton */}
+              {loadingProgress >= 80 && loadingProgress < 90 && (
+                <div className="absolute inset-0 overflow-hidden flex flex-col items-center justify-center gap-6 px-12 py-8 bg-[#faf8f5]">
+                  <div className="w-full max-w-lg bg-white rounded-2xl shadow-lg p-8 border border-gray-100 flex flex-col gap-6 animate-in slide-in-from-bottom-10 fade-in duration-700">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-500">
+                        <AlertCircle className="w-6 h-6 animate-pulse" />
+                      </div>
+                      <div className="flex-1 space-y-2">
+                        <div className="h-4 w-1/3 bg-gray-200 rounded-full overflow-hidden relative">
+                           <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-[shimmer_1.5s_infinite]" />
+                        </div>
+                        <div className="h-3 w-1/2 bg-gray-100 rounded-full" />
+                      </div>
+                    </div>
+                    <div className="space-y-3">
+                      <div className="h-2 w-full bg-gray-100 rounded-full overflow-hidden relative">
+                        <div className="absolute top-0 left-0 bottom-0 w-3/4 bg-gray-200 rounded-full animate-pulse delay-100" />
+                      </div>
+                      <div className="h-2 w-5/6 bg-gray-100 rounded-full overflow-hidden relative">
+                        <div className="absolute top-0 left-0 bottom-0 w-2/3 bg-gray-200 rounded-full animate-pulse delay-200" />
+                      </div>
+                      <div className="h-2 w-4/6 bg-gray-100 rounded-full overflow-hidden relative">
+                        <div className="absolute top-0 left-0 bottom-0 w-1/2 bg-gray-200 rounded-full animate-pulse delay-300" />
+                      </div>
+                    </div>
+                    <div className="flex gap-4 pt-4 border-t border-gray-50">
+                      <div className="flex-1 h-24 bg-gray-50 rounded-xl border border-gray-100 flex items-center justify-center">
+                         <div className="w-8 h-8 rounded-full bg-gray-200 animate-ping opacity-20" />
+                      </div>
+                      <div className="flex-1 h-24 bg-gray-50 rounded-xl border border-gray-100 flex items-center justify-center delay-150">
+                         <div className="w-8 h-8 rounded-full bg-gray-200 animate-ping opacity-20" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Phase 4: Action Plan AI */}
+              {loadingProgress >= 90 && (
+                <div className="absolute inset-0 overflow-hidden flex flex-col items-center justify-center px-12 py-8 bg-[#faf8f5]">
+                  <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-[0_0_40px_-10px_rgba(9,68,19,0.15)] p-8 border border-[#094413]/20 animate-in zoom-in-95 fade-in duration-700">
+                    <div className="absolute -top-4 -right-4 w-24 h-24 bg-[#094413]/5 rounded-full blur-2xl animate-pulse" />
+                    <div className="absolute -bottom-4 -left-4 w-32 h-32 bg-[#094413]/5 rounded-full blur-2xl animate-pulse delay-300" />
+                    
+                    <div className="relative flex flex-col items-center text-center gap-5">
+                      <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#094413] to-[#1a5d26] shadow-lg flex items-center justify-center animate-bounce">
+                        <Bot className="w-8 h-8 text-white" />
+                      </div>
+                      <div className="space-y-2">
+                        <h3 className="text-lg font-bold text-gray-900">Finalizing Action Plan</h3>
+                        <p className="text-sm text-gray-500">Synthesizing insights into a tailored strategy...</p>
+                      </div>
+                      <div className="w-full space-y-3 mt-4">
+                        <div className="flex items-center gap-3 text-sm text-[#094413] font-medium bg-[#094413]/5 px-4 py-3 rounded-lg animate-in slide-in-from-left-4 fade-in duration-500">
+                           <CheckCircle2 className="w-5 h-5" /> <span>Identify core revenue blockers</span>
+                        </div>
+                        <div className="flex items-center gap-3 text-sm text-[#094413] font-medium bg-[#094413]/5 px-4 py-3 rounded-lg animate-in slide-in-from-left-4 fade-in duration-500 delay-200">
+                           <CheckCircle2 className="w-5 h-5" /> <span>Formulate win-back campaign</span>
+                        </div>
+                        <div className="flex items-center gap-3 text-sm text-gray-400 font-medium bg-gray-50 px-4 py-3 rounded-lg animate-pulse delay-500">
+                           <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-500 rounded-full animate-spin" /> <span>Generating direct-response scripts</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
 
